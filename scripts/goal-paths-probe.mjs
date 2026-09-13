@@ -28,6 +28,15 @@ try {
  check('choice lights rendered 3D geometry and card',chosen.scene.chosenPathMeshes===2&&chosen.scene.chosenSuggestionId===initial.suggestions[0].id&&await page.locator('.branch-option.is-chosen').count()===1&&await page.locator('.trail-branch-tethers path.is-chosen').count()===1,chosen.scene);
  check('unchosen alternatives remain dashed and actionable',await page.locator('.branch-option:not(.is-chosen) .branch-option__choose:enabled').count()===2&&await page.locator('.trail-branch-tethers path:not(.is-chosen)').count()===2);
  check('choosing does not fabricate a spoken exchange',JSON.stringify(chosen.session.turns)===JSON.stringify(initial.turns));
+ for (const name of ['Overview', 'Trail']) {
+  await page.getByRole('button',{name,exact:true}).click();await settle();
+  const wide=await page.evaluate(()=>({trail:window.__branchTrail,scene:window.__branchScene}));
+  check(`${name} retains the chosen path and saved alternatives`,wide.trail.chosenPathMeshes>=2&&wide.scene.paths.suggested>=3&&wide.trail.chosenSuggestionId===initial.suggestions[0].id,wide.trail);
+  if(name==='Overview')check('Overview includes every moment in this conversation',wide.trail.renderedVisits===wide.trail.visits.length);
+  await shot(`chosen-${name.toLowerCase()}`);
+ }
+ await page.getByRole('button',{name:'Focus',exact:true}).click();await settle();
+ check('zooming back in restores the full chosen question',await page.locator('.branch-option.is-chosen .branch-option__text').textContent()===initial.suggestions[0].text);
  await page.waitForTimeout(3000);await shot('chosen-path');
  await page.getByRole('button',{name:'Next exchange',exact:true}).click();await page.waitForFunction(n=>window.__branch.getSession().turns.filter(t=>t.final).length>n,initial.turns.filter(t=>t.final).length);await settle();
  await page.getByLabel('Revisit saved paths').selectOption(chosen.scene.decisionTurnId);await settle();
