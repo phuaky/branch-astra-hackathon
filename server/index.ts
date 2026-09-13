@@ -82,6 +82,7 @@ const GROUNDING_FAILURE_CODES = new Map([
 export interface ServerRuntime {
   apiKey?: string;
   openai?: OpenAI;
+  allowedOrigins?: readonly string[];
 }
 
 const liveRequestSchema = z.object({
@@ -611,7 +612,7 @@ async function handleMap(request: Request, runtime: ServerRuntime): Promise<Resp
 async function handleLiveSession(request: Request, runtime: ServerRuntime): Promise<Response> {
   if (!configured(runtime)) return json({ error: 'GPT-Live-1 is unavailable until the hackathon API key is configured.' }, 503);
   const origin = request.headers.get('origin');
-  if (origin && !ALLOWED_ORIGINS.has(origin)) return json({ error: 'Unexpected request origin' }, 403);
+  if (origin && !(runtime.allowedOrigins ?? [...ALLOWED_ORIGINS]).includes(origin)) return json({ error: 'Unexpected request origin' }, 403);
   const parsed = liveRequestSchema.safeParse(await parseJson(request));
   if (!parsed.success) return json({ error: 'Invalid live session request', issues: parsed.error.issues }, 400);
   if (parsed.data.context.some((turn) => turn.sessionId !== parsed.data.sessionId)) {

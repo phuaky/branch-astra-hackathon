@@ -41,7 +41,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [view, setView] = useState<'focus' | 'topic' | 'overview'>('focus');
-  const [simpleView, setSimpleView] = useState(() => new URLSearchParams(location.search).get('view') !== 'map');
+  const [simpleView, setSimpleView] = useState(() => new URLSearchParams(location.search).get('view') === 'simple');
   const [mapDetails, setMapDetails] = useState(false);
   const [mapBusy, setMapBusy] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);

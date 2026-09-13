@@ -7,7 +7,7 @@
     "dev": "bun scripts/dev.ts",
     "dev:web": "vite --host 127.0.0.1 --port 5180",
     "dev:server": "bun --watch server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && bun scripts/build-hosted.ts",
     "preview": "vite preview --host 127.0.0.1 --port 5180",
     "test": "bun test",
     "verify": "bun scripts/verify.ts"

@@ -6,7 +6,7 @@ Built for the GPT-6 Astra Hackathon in Singapore, 13 September 2026. Team: soil-
 
 ## Try the demo
 
-The hosted demo uses local preview rules. It supports transcript replay, the 3D map, source inspection, typed practice, and session export. The interface labels preview guidance. It does not connect visitors to the builders' API key.
+The hosted demo connects to Astra and GPT-Live-1 through its server. The API key stays in the hosting service's secret store. The opening sample uses labelled local preview rules. New exchanges use AI when the connection is available.
 
 1. Press Play or Next exchange.
 2. Select a moment to inspect its transcript.
@@ -14,7 +14,7 @@ The hosted demo uses local preview rules. It supports transcript replay, the 3D 
 4. Open Review and select Practise from this moment.
 5. Enter another response. Return to original to restore the first attempt.
 
-Open the demo with `?view=map` to start in the 3D view. The default view is a simpler topic list. Import [the fictional 48-turn call](docs/mock-sales-call.txt) to explore a longer conversation.
+The demo opens in the 3D map. Select Simple view or use `?view=simple` for a topic list. Import [the fictional 48-turn call](docs/mock-sales-call.txt) to explore a longer conversation.
 
 ## Run locally
 
@@ -41,7 +41,7 @@ This implementation uses the Responses API and Live API. It does not claim use o
 
 ## Data handling
 
-Imported transcripts remain in browser memory. With a local API key configured, reviewed transcript text is sent for analysis. Selected-name replacements apply to the working copy and exports. Other business details remain unchanged. Live audio is sent to the voice provider before display masking.
+Imported transcripts remain in browser memory. With AI connected, reviewed transcript text is sent for analysis. Selected-name replacements apply to the working copy and exports. Other business details remain unchanged. Live audio is sent to the voice provider before display masking.
 
 The bundled call is fictional. The bundled evidence passage describes an internal reliability trial; it is not a customer success story. This repository excludes private evaluation transcripts, reversible name maps, credentials, and unreviewed recordings.
 
@@ -59,4 +59,4 @@ Recorded development checks established real Astra coaching and a 120-second GPT
 
 ## Stack
 
-TypeScript, React, Three.js, Vite, Bun, and the OpenAI SDK. The browser contains the map, transcript, review, and practice state. The local Bun server handles model requests and credentials.
+TypeScript, React, Three.js, Vite, Bun, and the OpenAI SDK. The browser contains the map, transcript, review, and practice state. The local Bun server and hosted Worker handle model requests and credentials. Set the hosted `OPENAI_API_KEY` as a Sites secret and deploy to apply a key change.
