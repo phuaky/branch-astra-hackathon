@@ -42,6 +42,28 @@ export interface Suggestion {
   turnIds: string[];
   recommended: boolean;
   kind: 'question' | 'response';
+  intent?: MoveIntent;
+}
+
+export type MoveIntent = 'discover' | 'qualify' | 'recommend' | 'resolve' | 'commit' | 'complete';
+export interface CallBrief {
+  goal: string;
+  offer: string;
+  idealCustomer: string;
+  pricing: string;
+  constraints: string;
+}
+export interface CoachingDirection {
+  stage: MoveIntent;
+  summary: string;
+  established: string[];
+  blockers: string[];
+}
+export interface DecisionPoint {
+  throughTurnId: string;
+  suggestions: Suggestion[];
+  chosenSuggestionId: string | null;
+  direction?: CoachingDirection;
 }
 
 export interface EvidenceSource {
@@ -89,6 +111,7 @@ export interface CoachUpdate {
   providerResponseId?: string;
   latencyMs?: number;
   serviceTier?: string;
+  direction?: CoachingDirection;
 }
 
 export type MapUpdate = Pick<CoachUpdate,
@@ -102,6 +125,8 @@ export interface CoachRequest {
   activeTopicId?: string | null;
   topics: Pick<Topic, 'id' | 'key' | 'label' | 'summary'>[];
   evidence: EvidenceSource[];
+  brief?: CallBrief;
+  chosenMove?: { throughTurnId: string; text: string; intent?: MoveIntent };
 }
 
 export interface Session {
@@ -124,6 +149,9 @@ export interface Session {
   guidanceStatus: 'idle' | 'analysing' | 'ready' | 'error';
   guidanceError: string | null;
   provider: 'astra' | 'local-preview' | 'recorded' | null;
+  brief?: CallBrief;
+  direction?: CoachingDirection;
+  decisions?: DecisionPoint[];
   fork?: { parentSessionId: string; throughTurnId: string; parentAssessment: Assessment | null };
 }
 

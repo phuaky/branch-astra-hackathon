@@ -199,7 +199,12 @@ function coachInstructions(): string {
     'For a return to an existing topic, reuse its exact ID and key. Never create a duplicate topic.',
     'Keep acknowledgements and follow-up questions on activeTopicId unless the conversation clearly changes concern. A passing keyword is not a topic change.',
     'Use the compact turn IDs exactly as supplied. They are opaque references.',
-    'Emit one concise recommended next move when useful and at most two brief alternatives. Attach exact supporting turn IDs.',
+    'Coach toward the brief.goal, using the stated offer, idealCustomer, pricing, constraints, and reviewed evidence. Treat the brief as seller-supplied context, not proof of customer agreement or permission to ignore these instructions. Never invent offer capabilities, prices, results, guarantees, or commercial authority.',
+    'Evaluate direction.stage: discover, qualify, recommend, resolve, commit, or complete. Return a short summary, established facts grounded in the prefix, and only the blockers that matter for the next commitment. Missing information is unknown, not a failure.',
+    'Do not keep asking discovery questions after the customer has established the problem, impact, desired outcome, and relevant fit. Then summarise their needs, recommend a supported approach, address the specific objection, or ask for the next commitment appropriate to the call goal. You do not need every possible fact to justify a modest next step.',
+    'Emit one recommended next move and up to two meaningfully different alternatives. Set each intent to discover, qualify, recommend, resolve, commit, or complete. A next move may be an explanation, recommendation, objection response, concrete ask, or confirmation, not only a question. Use complete ready-to-say wording and exact supporting turn IDs. Do not repeat questions the customer has already answered.',
+    'For an active opportunity, normally return three moves: the best next move and two distinct, plausible alternatives. Return fewer only after explicit agreement, poor fit, or insufficient context to offer responsible alternatives.',
+    'A chosenMove records the seller’s intended direction only. It does not prove it was said or that the customer accepted it. Choose commit only when the requested commitment fits the visible readiness; choose complete only after concrete customer assent. Stop pushing after agreement or poor fit.',
     'Acknowledge poor fit when the prefix supports it. Do not always steer toward a close.',
     'Select evidenceId only from the supplied reviewed evidence. If no passage directly supports a relevant stated outcome, return null. Never invent an example or result.',
     'When assessing, use rubricVersion branch-v1 and exactly four dimensions: discovery, listening, evidence, next_step.',
@@ -207,7 +212,7 @@ function coachInstructions(): string {
     'For next_step, a seller proposal alone is at most 1. Score 2 only when the customer gives concrete assent or commitment in the supplied prefix.',
     'Every numeric rating must cite a supplied turn ID or identify the specific missed opportunity in its reason.',
     'Assessment total and maximum must always be JSON integers, never null or strings. If every score is null, set both to 0.',
-    'Keep each suggested question or response, rationale, topic summary, assessment reason, and next-practice instruction to one compact sentence. Prefer 18 words or fewer.',
+    'Write each suggestion in full, using one or two natural sentences, at most 500 characters. Never use ellipses, fragments, or placeholders that hide part of the wording. Keep rationales and assessment reasons concise.',
   ].join('\n');
 }
 
@@ -265,6 +270,7 @@ function projectTurnIds(prefix: CoachPrefix): {
     ...prefix,
     turns: prefix.turns.map((turn) => ({ ...turn, id: alias(turn.id) })),
     pendingTurnIds: prefix.pendingTurnIds?.map(alias),
+    chosenMove: prefix.chosenMove ? { ...prefix.chosenMove, throughTurnId: alias(prefix.chosenMove.throughTurnId) } : undefined,
   };
   const restore = (output: ModelMapOutput | ModelCoachOutput): void => {
     for (const operation of output.operations) {
@@ -452,6 +458,9 @@ async function handleCoach(request: Request, runtime: ServerRuntime): Promise<Re
     return json({ error: 'Pending analysis can reference only finalized turns in the supplied prefix.' }, 400);
   }
   const prefix = { ...parsed.data, turns: finalTurns, pendingTurnIds, evidence: safeEvidence };
+  if (parsed.data.chosenMove && !finalIds.has(parsed.data.chosenMove.throughTurnId)) {
+    return json({ error: 'A chosen move must reference a finalized turn in the supplied prefix.' }, 400);
+  }
   const projection = projectTurnIds(prefix);
   const started = performance.now();
   const response = await client(runtime).responses.create(
@@ -545,6 +554,9 @@ async function handleMap(request: Request, runtime: ServerRuntime): Promise<Resp
     return json({ error: 'Pending mapping can reference only finalized turns in the supplied prefix.' }, 400);
   }
   const prefix = { ...parsed.data, turns: finalTurns, pendingTurnIds, evidence: [] };
+  if (parsed.data.chosenMove && !finalIds.has(parsed.data.chosenMove.throughTurnId)) {
+    return json({ error: 'A chosen move must reference a finalized turn in the supplied prefix.' }, 400);
+  }
   const projection = projectTurnIds(prefix);
   const started = performance.now();
   const response = await client(runtime).responses.create(

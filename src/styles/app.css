@@ -211,6 +211,15 @@ input::placeholder, textarea::placeholder { color: #48656d; }
 
 .play-button { width: auto; min-width: 86px; gap: 8px; padding: 0 14px; border-radius: 8px; font-size: 13px; }
 .coach-extras { margin-top: 18px; }
+.dialog-brief { width: 720px; }
+.call-brief-editor > p { color: #98ada5; font-size: 13px; line-height: 1.7; margin: 12px 0 20px; }
+.goal-presets { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 20px; }
+.goal-presets button { border: 1px solid #b7d3bd2a; border-radius: 7px; padding: 8px 11px; font-size: 11px; color: #acc3b7; background: #0d1c1b; }
+.goal-presets button[aria-pressed=true] { color: #d0f8dd; border-color: #b4ebcb83; background: #1f382c; }
+.brief-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.call-brief-editor .brief-note { font-size: 11px; color: #809b8c; }
+.brief-trigger { color: #bbe4cb; }
+@media(max-width: 620px) { .brief-field-pair { grid-template-columns: 1fr; gap: 0; } .brief-trigger span { display: none; } .spatial-view .space-controls { left: 12px; right: 12px; top: 57px; max-width: none; gap: 6px; } .spatial-view .map-detail-switch { display: flex; } .spatial-view .return-current { bottom: 12px; right: 12px; } }
 .coach-extras > summary { cursor: pointer; padding: 12px 2px; font-size: 12px; color: #a2b9b5; }
 .coach-provenance { flex-wrap: wrap; font-size: 11px; line-height: 1.6; }
 .coach-provenance > span:last-child:not(.soft-dot):not(.pulse-dot) { flex-basis: 100%; color: #d9be95; }
@@ -299,4 +308,19 @@ input::placeholder, textarea::placeholder { color: #48656d; }
   .simple-view .return-current { position: static; align-self: flex-start; }
   .simple-view .speed-control { display: flex; }
   .playback-clock { font-size: 10px; }
+}
+@media (max-width: 860px) {
+  .spatial-view .scene-shell { left: 0; }
+}
+@media (max-width: 620px) {
+  .spatial-view .playback-bar:has(.typed-turn) { height: 112px; flex-wrap: wrap; padding-block: 8px; }
+  .spatial-view .typed-turn { display: flex; order: 5; flex: 1 0 100%; }
+  .spatial-view:has(.typed-turn) .trail-navigator { bottom: 122px; }
+}
+@media (max-width: 620px) {
+  .spatial-view .scene-shell { top: 145px; }
+  .spatial-view .conversation-trail { scroll-padding: 12px 0 80px; }
+  .spatial-view .conversation-trail__viewport { height: 260px; }
+  .spatial-view .trail-heading { top: 18px; }
+  .spatial-view .branch-deck { top: 265px; }
 }

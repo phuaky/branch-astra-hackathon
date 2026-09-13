@@ -8,6 +8,7 @@ import type {
   Suggestion,
   Turn,
 } from '../contracts';
+import { previewStrategy } from './strategy';
 
 const STOP_WORDS = new Set([
   'about', 'after', 'again', 'also', 'and', 'are', 'because', 'been', 'before', 'being', 'but', 'can', 'could',
@@ -325,13 +326,15 @@ export function localPreviewCoach(request: CoachRequest): CoachUpdate {
     },
   ];
   const matchedEvidence = matchEvidence(latestCustomer, request.evidence);
+  const strategy = previewStrategy(request, suggestions);
 
   return {
     sessionId: request.sessionId,
     generation: request.generation,
     throughTurnId: last.id,
     operations,
-    suggestions,
+    suggestions: request.brief ? strategy.suggestions : suggestions,
+    direction: strategy.direction,
     evidenceId: matchedEvidence?.id ?? null,
     assessment: buildAssessment(request.turns, last.id, matchedEvidence),
     provider: 'local-preview',

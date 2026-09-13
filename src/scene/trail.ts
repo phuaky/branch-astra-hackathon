@@ -1,4 +1,4 @@
-import type { Session, Suggestion, Turn, Vec3 } from '../contracts';
+import type { DecisionPoint, Session, Suggestion, Turn, Vec3 } from '../contracts';
 
 export interface TrailVisit {
   id: string;
@@ -49,11 +49,28 @@ export function focusedVisit(visits: TrailVisit[], topicId: string | null, turnI
   return (topicId ? [...visits].reverse().find(visit => visit.topicId === topicId) : undefined) ?? visits.at(-1);
 }
 
-export function nextBranches(session: Session, visit: TrailVisit | undefined, visits: TrailVisit[]): Suggestion[] {
-  // Advice belongs to the current occurrence, never an earlier visit to the
-  // same topic. Old advice stays explicitly labelled in the coaching panel.
-  if (!visit || visit.id !== visits.at(-1)?.id) return [];
-  return session.suggestions.filter(suggestion => suggestion.topicId === visit.topicId)
+export function decisionPoints(session: Session): DecisionPoint[] {
+  const history = new Map<string, DecisionPoint>();
+  for (const update of session.coachHistory) if (update.suggestions.length) history.set(update.throughTurnId, {
+    throughTurnId: update.throughTurnId, suggestions: update.suggestions, chosenSuggestionId: null, direction: update.direction,
+  });
+  for (const decision of session.decisions ?? []) history.set(decision.throughTurnId, decision);
+  const order = new Map(session.turns.map((turn, index) => [turn.id, index]));
+  return [...history.values()].filter(item => order.has(item.throughTurnId)).sort((a, b) => order.get(a.throughTurnId)! - order.get(b.throughTurnId)!);
+}
+
+export function focusedDecision(session: Session, visit: TrailVisit | undefined, selectedTurnId?: string | null): DecisionPoint | undefined {
+  if (!visit) return undefined;
+  const index = selectedTurnId ? session.turns.findIndex(turn => turn.id === selectedTurnId) : session.turns.length - 1;
+  return decisionPoints(session).filter(item => visit.turns.some(turn => turn.id === item.throughTurnId)
+    && session.turns.findIndex(turn => turn.id === item.throughTurnId) <= index).at(-1);
+}
+
+export function nextBranches(session: Session, visit: TrailVisit | undefined, visits: TrailVisit[], selectedTurnId?: string | null): Suggestion[] {
+  const decision = focusedDecision(session, visit, selectedTurnId);
+  const suggestions = decision?.suggestions ?? (visit?.id === visits.at(-1)?.id && !selectedTurnId ? session.suggestions : []);
+  if (!visit) return [];
+  return suggestions.filter(suggestion => suggestion.topicId === visit.topicId)
     .sort((a, b) => Number(b.recommended) - Number(a.recommended)).slice(0, 3);
 }
 

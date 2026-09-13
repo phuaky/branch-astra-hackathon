@@ -1,0 +1,29 @@
+{
+  "localTests": {
+    "pass": 137,
+    "fail": 0,
+    "assertions": 553
+  },
+  "publicTests": {
+    "pass": 133,
+    "skipPrivateSource": 4,
+    "fail": 0
+  },
+  "browser": {
+    "goalPaths": 28,
+    "trail": 27,
+    "usability": 23,
+    "exceptions": 0
+  },
+  "localProviderCases": [
+    "ready prospect: scoped pilot ask",
+    "incomplete context: discovery",
+    "poor fit: no further sales ask"
+  ],
+  "mobileWidths": [
+    390,
+    1365,
+    1920
+  ],
+  "microphoneRetested": false
+}

@@ -1,5 +1,20 @@
 import { z } from 'zod';
 
+export const moveIntentSchema = z.enum(['discover', 'qualify', 'recommend', 'resolve', 'commit', 'complete']);
+export const callBriefSchema = z.object({
+  goal: z.string().min(1).max(300),
+  offer: z.string().max(2400),
+  idealCustomer: z.string().max(1200),
+  pricing: z.string().max(1200),
+  constraints: z.string().max(1600),
+});
+export const directionSchema = z.object({
+  stage: moveIntentSchema,
+  summary: z.string().min(1).max(300),
+  established: z.array(z.string().min(1).max(220)).max(4),
+  blockers: z.array(z.string().min(1).max(220)).max(3),
+});
+
 export const turnSchema = z.object({
   id: z.string().min(1),
   sessionId: z.string().min(1),
@@ -35,6 +50,8 @@ export const coachRequestSchema = z.object({
     summary: z.string(),
   })),
   evidence: z.array(evidenceSourceSchema),
+  brief: callBriefSchema.optional(),
+  chosenMove: z.object({ throughTurnId: z.string(), text: z.string().max(500), intent: moveIntentSchema.optional() }).optional(),
 });
 
 export const mapOperationSchema = z.discriminatedUnion('type', [
@@ -57,11 +74,12 @@ export const mapOperationSchema = z.discriminatedUnion('type', [
 export const suggestionSchema = z.object({
   id: z.string().min(1),
   topicId: z.string().min(1),
-  text: z.string().min(1).max(240),
+  text: z.string().min(1).max(500),
   rationale: z.string().min(1).max(280),
   turnIds: z.array(z.string().min(1)).min(1),
   recommended: z.boolean(),
   kind: z.enum(['question', 'response']),
+  intent: moveIntentSchema.optional(),
 });
 
 export const assessmentDimensionSchema = z.object({
@@ -89,6 +107,7 @@ export const coachModelOutputSchema = mapModelOutputSchema.extend({
   suggestions: z.array(suggestionSchema).max(3),
   evidenceId: z.string().min(1).nullable(),
   assessment: assessmentSchema.nullable(),
+  direction: directionSchema.optional(),
 });
 
 export const coachUpdateSchema = coachModelOutputSchema.extend({
@@ -102,7 +121,7 @@ export const coachUpdateSchema = coachModelOutputSchema.extend({
   serviceTier: z.string().optional(),
 });
 
-export const mapUpdateSchema = coachUpdateSchema.omit({ suggestions: true, evidenceId: true, assessment: true });
+export const mapUpdateSchema = coachUpdateSchema.omit({ suggestions: true, evidenceId: true, assessment: true, direction: true });
 
 export function validateGroundedMapOutput(
   output: z.infer<typeof mapModelOutputSchema>,

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowLeft, ArrowUpRight, AudioLines, BookOpen, Check, ChevronDown, ChevronRight, CircleHelp, CornerDownRight, Expand, FileText, GitBranch, Layers3, Maximize2, Mic, Pause, Play, Plus, RotateCcw, Scan, ShieldCheck, SkipForward, Sparkles, Square, Upload, X } from 'lucide-react';
-import type { CoachRequest, CoachUpdate, EvidenceSource, MapUpdate, NameAlias, ParsedTranscript, Session, SpeakerRole, Turn } from './contracts';
+import type { CallBrief, CoachRequest, CoachUpdate, EvidenceSource, MapUpdate, NameAlias, ParsedTranscript, Session, SpeakerRole, Turn } from './contracts';
 import ConversationTrail from './scene/ConversationTrail';
 import TopicList from './scene/TopicList';
+import CallBriefEditor from './coach/CallBriefEditor';
+import { moveLabels, sampleBrief } from './coach/strategy';
+import { chooseBranch } from './state/session';
 import { parseTranscript, formatTime } from './input/transcript';
 import { startLive } from './input/live';
 import { anonymizeText, anonymizeValue, suggestAliases } from './privacy/names';
@@ -19,7 +22,7 @@ function makeSample() {
   const parsed = parseTranscript(exampleTranscript, session.title, session.id);
   session.timing = parsed.timing;
   const cursor = 71000;
-  let seeded = { ...session, evidence: internalTrialEvidence };
+  let seeded: Session = { ...session, evidence: internalTrialEvidence, brief: sampleBrief };
   for (const turn of visibleTurnsAt(parsed.turns, cursor)) {
     seeded = upsertTurn(seeded, turn);
     if (turn.final) seeded = applyCoachUpdate(seeded, localPreviewCoach(buildCoachRequest(seeded)));
@@ -27,7 +30,7 @@ function makeSample() {
   return { session: seeded, parsed, cursor };
 }
 
-type Dialog = 'import' | 'names' | 'evidence' | 'review' | 'source' | 'live' | null;
+type Dialog = 'import' | 'names' | 'evidence' | 'review' | 'source' | 'live' | 'brief' | null;
 type VoiceHandle = Awaited<ReturnType<typeof startLive>>;
 type ProviderStatus = { configured: boolean; model?: string; liveModel?: string };
 type SemanticSample = { sessionId: string; generation: number; turnId: string; finalizedAt: number; acceptedAt: number; provider: string; model?: string; providerResponseId?: string; serviceTier?: string; sourceMode: Session['mode']; pace: number };
@@ -76,6 +79,8 @@ export default function App() {
   const rawArchiveRef = useRef(new Map<string, Turn[]>());
   const allUpdatesRef = useRef<CoachUpdate[]>(initial.current.session.coachHistory);
   const allMapsRef = useRef<MapUpdate[]>(initial.current.session.mapHistory ?? []);
+  const allDecisionsRef = useRef(initial.current.session.decisions ?? []);
+  const rawBriefRef = useRef<CallBrief | undefined>(initial.current.session.brief);
   const voiceRef = useRef<VoiceHandle | null>(null);
   const voiceAbortRef = useRef<AbortController | null>(null);
   const voiceAttemptRef = useRef(0);
@@ -202,6 +207,7 @@ export default function App() {
             const accepted = applyCoachUpdate(current, update);
             if (accepted === current) throw new Error('The coach returned an inconsistent update. Your transcript is still being captured.');
             allUpdatesRef.current = [...allUpdatesRef.current.filter(item => item.throughTurnId !== update.throughTurnId), update];
+            allDecisionsRef.current = [...allDecisionsRef.current.filter(item => !accepted.decisions?.some(next => next.throughTurnId === item.throughTurnId)), ...(accepted.decisions ?? [])];
             diagnosticsRef.current.updates.push({ throughTurnId: update.throughTurnId, latencyMs: update.latencyMs, provider: update.provider });
             if (update.provider !== 'astra') {
               const acceptedAt = performance.now();
@@ -272,7 +278,7 @@ export default function App() {
     pendingRef.current = null;
     mapControllerRef.current?.abort();
     mapPendingRef.current = null;
-    const next = rebuildSession(sessionRef.current, visibleTurnsAt(source.turns, nextCursor), allUpdatesRef.current, allMapsRef.current);
+    const next = rebuildSession({ ...sessionRef.current, decisions: allDecisionsRef.current }, visibleTurnsAt(source.turns, nextCursor), allUpdatesRef.current, allMapsRef.current);
     sessionRef.current = next;
     setSession(next);
     setCursor(nextCursor);
@@ -292,6 +298,39 @@ export default function App() {
     setSelectedTopicId(id);
     const turnId = [...sessionRef.current.turns].reverse().find(turn => sessionRef.current.turnTopics[turn.id] === id)?.id;
     if (turnId) selectTurn(turnId);
+  }
+
+  function saveCallBrief(brief: CallBrief) {
+    rawBriefRef.current = brief;
+    controllerRef.current?.abort(); pendingRef.current = null;
+    mapControllerRef.current?.abort(); mapPendingRef.current = null;
+    const current = sessionRef.current;
+    const next = { ...current, brief: anonymizeValue(brief, aliasesRef.current), generation: current.generation + 1, analyzedThroughTurnId: null, direction: undefined };
+    sessionRef.current = next; setSession(next); setDialog(null);
+    notify('Call goal saved. Updating your next moves.');
+  }
+
+  function selectBranch(throughTurnId: string, suggestionId: string) {
+    const current = sessionRef.current;
+    const decision = current.decisions?.find(item => item.throughTurnId === throughTurnId);
+    const suggestion = decision?.suggestions.find(item => item.id === suggestionId);
+    if (!suggestion) return;
+    const historical = throughTurnId !== current.turns.filter(turn => turn.final).at(-1)?.id;
+    if (historical) {
+      const fork = chooseBranch(forkSession(current, throughTurnId), throughTurnId, suggestionId);
+      const originals = new Map([...rawSourceRef.current, ...rawLiveRef.current].map(item => [item.id, item]));
+      rawParentRef.current = current.turns.map(item => ({ ...(originals.get(item.id) ?? item), sessionId: current.id, sourceMode: item.sourceMode }));
+      archiveAttempt(current, rawParentRef.current); setParent(structuredClone(current));
+      void beginVoice(fork, false);
+      setTypedTurn(suggestion.text); setLiveRole('seller');
+      notify('Separate practice path opened. Your original choice is saved.');
+      return;
+    }
+    const next = chooseBranch(current, throughTurnId, suggestionId);
+    sessionRef.current = next; setSession(next);
+    allDecisionsRef.current = [...allDecisionsRef.current.filter(item => item.throughTurnId !== throughTurnId), next.decisions!.find(item => item.throughTurnId === throughTurnId)!];
+    if (current.mode !== 'replay') { setTypedTurn(suggestion.text); setLiveRole('seller'); }
+    notify('Path chosen. Alternatives are saved at this moment.');
   }
 
   function showNames() {
@@ -316,6 +355,8 @@ export default function App() {
         mapPendingRef.current = null;
         allUpdatesRef.current = restored.coachHistory;
         allMapsRef.current = restored.mapHistory ?? [];
+        allDecisionsRef.current = restored.decisions ?? [];
+        rawBriefRef.current = restored.brief;
         restoredSnapshotRef.current = true;
         sessionRef.current = restored;
         setSession(restored);
@@ -365,9 +406,11 @@ export default function App() {
       fresh.generation = current.generation + 1;
       fresh.turns = anonymizeValue(rawLiveRef.current, reviewed);
       fresh.evidence = anonymizeValue(rawEvidenceRef.current, reviewed);
+      fresh.brief = rawBriefRef.current ? anonymizeValue(rawBriefRef.current, reviewed) : undefined;
       if (current.fork) fresh.fork = { ...current.fork, parentAssessment: null };
       allUpdatesRef.current = [];
       allMapsRef.current = [];
+      allDecisionsRef.current = [];
       sessionRef.current = fresh;
       setSession(fresh); setSelectedTopicId(null); setSelectedTurnId(null);
       if (parent) setParent(value => value ? rebuildSession(anonymizeValue(value, reviewed), anonymizeValue(rawParentRef.current, reviewed), [], []) : null);
@@ -383,8 +426,10 @@ export default function App() {
     const parsed = anonymizeValue(originalParsed, reviewed);
     fresh.timing = parsed.timing;
     fresh.evidence = anonymizeValue(rawEvidenceRef.current, reviewed);
+    fresh.brief = rawBriefRef.current ? anonymizeValue(rawBriefRef.current, reviewed) : undefined;
     allUpdatesRef.current = [];
     allMapsRef.current = [];
+    allDecisionsRef.current = [];
     sessionRef.current = fresh;
     setSession(fresh);
     setSource(parsed);
@@ -426,7 +471,8 @@ export default function App() {
     pendingRef.current = null;
     mapControllerRef.current?.abort();
     mapPendingRef.current = null;
-    const next = practice ?? { ...createSession('Live conversation', 'live'), evidence: sessionRef.current.evidence };
+    const next = practice ?? { ...createSession('Live conversation', 'live'), evidence: sessionRef.current.evidence, brief: sessionRef.current.brief };
+    allDecisionsRef.current = next.decisions ?? [];
     const originals = new Map([...rawSourceRef.current, ...rawLiveRef.current].map(turn => [turn.id, turn]));
     rawLiveRef.current = next.turns.map(turn => ({ ...(originals.get(turn.id) ?? turn), sessionId: next.id, sourceMode: turn.sourceMode }));
     sessionRef.current = next;
@@ -485,6 +531,7 @@ export default function App() {
     sessionRef.current = parent;
     allUpdatesRef.current = parent.coachHistory;
     allMapsRef.current = parent.mapHistory ?? [];
+    allDecisionsRef.current = parent.decisions ?? [];
     setParent(null);
     setCoachTab('guide');
   }
@@ -504,6 +551,7 @@ export default function App() {
     setSession(structuredClone(attempt)); sessionRef.current = structuredClone(attempt);
     allUpdatesRef.current = attempt.coachHistory;
     allMapsRef.current = attempt.mapHistory ?? [];
+    allDecisionsRef.current = attempt.decisions ?? [];
     setCoachTab('review'); setVoiceMessage('Saved practice · microphone stopped');
     setSelectedTopicId(null); setSelectedTurnId(null); setFollow(true);
   }
@@ -520,7 +568,8 @@ export default function App() {
   function beginTypedPractice() {
     stopVoice(); controllerRef.current?.abort(); pendingRef.current = null;
     mapControllerRef.current?.abort(); mapPendingRef.current = null;
-    const next = { ...createSession('Practice conversation', 'practice'), evidence: sessionRef.current.evidence };
+    const next = { ...createSession('Practice conversation', 'practice'), evidence: sessionRef.current.evidence, brief: sessionRef.current.brief };
+    allDecisionsRef.current = [];
     rawLiveRef.current = []; allUpdatesRef.current = []; allMapsRef.current = [];
     setSession(next); sessionRef.current = next;
     setDialog(null); setParent(null); setSelectedTopicId(null); setSelectedTurnId(null); setFollow(true);
@@ -564,8 +613,10 @@ export default function App() {
         mapControllerRef.current?.abort(); mapPendingRef.current = null;
         allUpdatesRef.current = value.coachHistory;
         allMapsRef.current = value.mapHistory ?? [];
+        allDecisionsRef.current = value.decisions ?? [];
         setSession(value); sessionRef.current = value;
       },
+      selectBranch, saveCallBrief,
       getExport: () => exportSessionBundle(anonymizeValue(sessionRef.current, aliasesRef.current), anonymizeValue(archivedRef.current.filter(item => item.id !== sessionRef.current.id), aliasesRef.current)),
     };
   });
@@ -588,6 +639,7 @@ export default function App() {
       <span className="header-divider" />
       <div className="session-title"><span className="eyebrow">CONVERSATION SPACE</span><strong>{session.title}</strong></div>
       <div className="header-actions">
+        <button className="button button-subtle brief-trigger" aria-label="Call brief" onClick={() => setDialog('brief')}><GitBranch size={16} /><span>Call brief</span></button>
         <button className="privacy-button" onClick={showNames}><ShieldCheck size={16} /><span>{aliases.some(alias => alias.enabled) ? 'Names anonymized' : 'Names & privacy'}</span></button>
         <button className="button button-subtle" title="Import transcript" aria-label="Import transcript" onClick={() => { setImportText(''); setImportName(''); setImportError(''); setDialog('import'); }}><Upload size={16} /><span>Import transcript</span></button>
         <button className="icon-button" title="Save anonymized session" aria-label="Save anonymized session" onClick={saveSession}><ArrowDownToLine size={18} /></button>
@@ -596,7 +648,7 @@ export default function App() {
     </header>
 
     <main className="workspace">
-      <div className="scene-shell">{simpleView ? <TopicList session={session} selectedTopicId={selectedTopicId} onSelectTopic={selectTopic} mapping={mapBusy} error={mapError} onRetry={retryAnalysis} /> : <ConversationTrail session={session} selectedTopicId={selectedTopicId} selectedTurnId={selectedTurnId} onSelectTopic={selectTopic} onSelectTurn={id => { selectTurn(id); setView('focus'); }} onOpenSource={() => setDialog('source')} mapping={mapBusy} mapError={mapError} onRetry={retryAnalysis} follow={follow} onExplore={() => setFollow(false)} view={view} cameraReset={cameraReset} />}</div>
+      <div className="scene-shell">{simpleView ? <TopicList session={session} selectedTopicId={selectedTopicId} onSelectTopic={selectTopic} mapping={mapBusy} error={mapError} onRetry={retryAnalysis} /> : <ConversationTrail onChooseBranch={selectBranch} onEditBrief={() => setDialog('brief')} session={session} selectedTopicId={selectedTopicId} selectedTurnId={selectedTurnId} onSelectTopic={selectTopic} onSelectTurn={id => { selectTurn(id); setView('focus'); }} onOpenSource={() => setDialog('source')} mapping={mapBusy} mapError={mapError} onRetry={retryAnalysis} follow={follow} onExplore={() => setFollow(false)} view={view} cameraReset={cameraReset} />}</div>
       <div className="map-topline"><div className={`mode-pill mode-${session.mode}`}><span className="mode-mark" />{sourceLabel}</div><span className="map-title">{activeTopic?.label ?? 'Where the conversation begins'}</span></div>
       <aside className="transcript-panel panel">
         <div className="panel-heading"><div><AudioLines size={17} /><h2>Conversation</h2></div><span className="muted-count">{finalCount} turns</span></div>
@@ -617,17 +669,17 @@ export default function App() {
       <aside className="coach-panel">
         <div className="coach-tabs"><button className={coachTab === 'guide' ? 'active' : ''} onClick={() => setCoachTab('guide')}><Sparkles size={15} />Next move</button><button className={coachTab === 'review' ? 'active' : ''} onClick={() => setCoachTab('review')}><BookOpen size={15} />Review</button></div>
         {coachTab === 'guide' ? <>
-          <section className="next-move-card panel"><div className="card-kicker"><span className="signal-icon"><Sparkles size={14} /></span> SUGGESTED NEXT QUESTION</div>
+          <section className="next-move-card panel"><div className="card-kicker"><span className="signal-icon"><Sparkles size={14} /></span> {recommended?.intent ? moveLabels[recommended.intent].toUpperCase() : 'SUGGESTED NEXT MOVE'}</div>
             <h2>{recommended?.text ?? 'Listen for what matters to them.'}</h2>
-            <p>{recommended?.rationale ?? 'A useful next question will appear as the conversation develops.'}</p>
+            <p>{recommended?.rationale ?? 'The next move will reflect your call goal and the conversation so far.'}</p>
             {recommended && <button className="text-button" onClick={() => selectTurn(recommended.turnIds[0])}>See the moment <ArrowUpRight size={15} /></button>}
-            <div className="coach-provenance"><span className={session.guidanceStatus === 'analysing' ? 'pulse-dot' : 'soft-dot'} />{session.guidanceStatus === 'analysing' ? 'Updating the next question…' : session.guidanceStatus === 'error' ? 'Guidance unavailable' : session.provider === 'astra' ? 'AI guidance · Astra' : 'Local preview · keyword rules'}{guidanceBehind && recommended && <span>Earlier suggestion · through turn {Math.max(0, analyzedIndex + 1)}</span>}</div>
+            <div className="coach-provenance"><span className={session.guidanceStatus === 'analysing' ? 'pulse-dot' : 'soft-dot'} />{session.guidanceStatus === 'analysing' ? 'Updating your next move…' : session.guidanceStatus === 'error' ? 'Guidance unavailable' : session.provider === 'astra' ? 'AI guidance · Astra' : 'Local preview · keyword rules'}{guidanceBehind && recommended && <span>Earlier suggestion · through turn {Math.max(0, analyzedIndex + 1)}</span>}</div>
           </section>
           <details className="coach-extras" open={!simpleView}><summary>More suggestions &amp; examples</summary>
           <section className="other-paths"><h3>Other paths <span>{Math.max(0, session.suggestions.length - 1)}</span></h3>{session.suggestions.filter(item => item.id !== recommended?.id).map((item, index) => <button key={item.id} onClick={() => { selectTopic(item.topicId); selectTurn(item.turnIds[0]); }}><span className="path-number">0{index + 2}</span><span>{item.text}</span><CornerDownRight size={16} /></button>)}{session.suggestions.length < 2 && <p className="quiet-empty">More directions appear as the context grows.</p>}</section>
           <section className="evidence-card panel"><div className="evidence-heading"><BookOpen size={16} /><h3>Something to draw on</h3><button className="icon-button small" title="Manage examples" aria-label="Manage examples" onClick={() => setDialog('evidence')}><Plus size={15} /></button></div>{example ? <><strong>{example.title}</strong><p>{example.outcome}</p><button className="text-button" onClick={() => setDialog('source')}>Read the source <ArrowUpRight size={14} /></button></> : <p className="quiet-empty">No matching example. Add a source your team can stand behind.</p>}</section>
           </details>
-          <div className="quick-guide"><strong>How to try it</strong><p>1. Press Play or Next exchange.</p><p>2. Select a topic to inspect what was said.</p><p>3. Use the next question to continue.</p><span>{provider.configured ? 'New exchanges use AI. The opening sample uses local preview rules.' : 'Local preview is active. AI is not connected.'}</span></div>
+          <div className="quick-guide"><strong>How to try it</strong><p>1. Press Play or Next exchange.</p><p>2. Select a topic to inspect what was said.</p><p>3. Choose a next move toward your call goal.</p><span>{provider.configured ? 'New exchanges use AI. The opening sample uses local preview rules.' : 'Local preview is active. AI is not connected.'}</span></div>
         </> : <section className="review-card panel"><div className="review-heading"><span className="eyebrow">THIS ATTEMPT</span><strong>{assessmentLabel(session.assessment)}</strong></div><p className="review-intro">Feedback on the conversation so far.</p>{session.assessment?.dimensions.map(dimension => <div className="rubric-row" key={dimension.id}><div><strong>{dimension.label}</strong><span>{dimension.score === null ? 'Not enough evidence' : `${dimension.score} / 2`}</span></div><p>{dimension.reason}</p>{dimension.turnIds[0] && <button className="text-button" onClick={() => selectTurn(dimension.turnIds[0])}>View exchange <ArrowUpRight size={13} /></button>}</div>)}{!session.assessment && <p className="quiet-empty">A rating appears once there is enough to assess.</p>}{comparison.length > 0 && <div className="comparison"><h3>Another path</h3>{comparison.map(row => <div key={row.id}><span>{row.label}</span><span>{row.before ?? '—'} <ArrowUpRight size={12} /> {row.after ?? '—'}</span></div>)}</div>}<button className="button button-primary retry-button" onClick={retry} disabled={!lastFinal}><GitBranch size={16} />Practise from this moment</button><p className="review-note">The original attempt stays intact.</p></section>}
         {session.guidanceStatus === 'error' && <div className="guidance-error" role="status">{session.guidanceError}<br /><span>Reviewed through turn {Math.max(0, analyzedIndex + 1)} of {finalCount}.</span><br /><button className="text-button" onClick={retryAnalysis}>Retry analysis</button></div>}
       </aside>
@@ -655,7 +707,8 @@ export default function App() {
       </>}
     </footer>
 
-    {dialog && <div className="dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setDialog(null); }}><section className={`dialog dialog-${dialog}`} role="dialog" aria-modal="true" aria-label={dialog === 'names' ? 'Review name replacements' : dialog === 'import' ? 'Import a conversation' : dialog === 'live' ? 'Start a live conversation' : 'Conversation details'}><button className="dialog-close icon-button" aria-label="Close dialog" onClick={() => setDialog(null)}><X size={20} /></button>
+    {dialog && <div className="dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setDialog(null); }}><section className={`dialog dialog-${dialog}`} role="dialog" aria-modal="true" aria-label={dialog === 'brief' ? 'Call brief' : dialog === 'names' ? 'Review name replacements' : dialog === 'import' ? 'Import a conversation' : dialog === 'live' ? 'Start a live conversation' : 'Conversation details'}><button className="dialog-close icon-button" aria-label="Close dialog" onClick={() => setDialog(null)}><X size={20} /></button>
+      {dialog === 'brief' && <CallBriefEditor brief={session.brief} onSave={saveCallBrief} />}
       {dialog === 'import' && <><span className="dialog-symbol"><FileText size={25} /></span><h2>Bring a conversation into focus.</h2><p>Open a transcript or paste it below. You can review names before anything is analysed.</p><button className="upload-zone" onClick={() => fileInputRef.current?.click()}><Upload size={23} /><strong>Choose a transcript</strong><span>.txt, .md or .branch.json</span></button><input ref={fileInputRef} type="file" accept=".txt,.md,.json" hidden onChange={async event => { const file = event.target.files?.[0]; if (file) { const text = await file.text(); setImportText(text); setImportName(file.name.replace(/\.[^.]+$/, '')); } }} /><label className="field-label">Conversation name<input value={importName} onChange={event => setImportName(event.target.value)} placeholder="For example, Tuesday discovery call" /></label><label className="field-label">Transcript<textarea rows={7} value={importText} onChange={event => setImportText(event.target.value)} placeholder="[00:00] Seller: Tell me about your current process…" /></label>{importError && <p className="form-error">{importError}</p>}<button className="button button-primary full-width" disabled={!importText.trim()} onClick={() => prepareImport(importText, importName)}>Review names <ChevronRight size={17} /></button></>}
       {dialog === 'names' && <><span className="dialog-symbol"><ShieldCheck size={26} /></span><h2>Keep the story. Change the names.</h2><p>Only selected names change. Amounts, dates, business details, and your original file stay intact.</p><div className="alias-list"><div className="alias-columns"><span>Original name</span><span>Display as</span></div>{draftAliases.map((alias, index) => <div className="alias-row" key={alias.id}><input type="checkbox" aria-label={`Replace ${alias.original || 'this name'}`} checked={alias.enabled} onChange={event => setDraftAliases(items => items.map((item, n) => n === index ? { ...item, enabled: event.target.checked } : item))} /><input aria-label={`Original name ${index + 1}`} value={alias.original} onChange={event => setDraftAliases(items => items.map((item, n) => n === index ? { ...item, original: event.target.value } : item))} /><ChevronRight size={14} /><input aria-label={`Replacement ${index + 1}`} value={alias.replacement} onChange={event => setDraftAliases(items => items.map((item, n) => n === index ? { ...item, replacement: event.target.value } : item))} /><button className="icon-button small" aria-label={`Remove name ${index + 1}`} onClick={() => setDraftAliases(items => items.filter((_, n) => n !== index))}><X size={14} /></button></div>)}</div><button className="text-button" onClick={() => setDraftAliases(items => [...items, { id: crypto.randomUUID(), original: '', replacement: `Person ${String.fromCharCode(65 + items.length)}`, enabled: true, kind: 'person' }])}><Plus size={15} />Add a name or company</button><div className="name-preview"><span className="eyebrow">PREVIEW</span><p>{anonymizeText(namePreviewRef.current, draftAliases).slice(0, 600)}</p></div><p className="privacy-note"><CircleHelp size={15} />For live calls, masking names on screen does not remove names from audio sent to the voice provider.</p><button className="button button-primary full-width" onClick={applyNames}><Check size={17} />Apply and open conversation</button></>}
       {dialog === 'live' && <><span className="dialog-symbol"><Mic size={26} /></span><h2>Let the conversation unfold.</h2><p>Use your microphone. The map follows new topics while guidance stays on screen.</p><div className="voice-connection"><span className={provider.configured ? 'soft-dot' : 'muted-dot'} /><strong>{provider.configured ? 'Voice connection available' : 'Voice is not connected yet'}</strong></div><label className="field-label">Who is speaking?<select value={liveRole} onChange={event => setLiveRole(event.target.value as SpeakerRole)}><option value="seller">Seller</option><option value="customer">Customer</option><option value="unknown">Unknown</option></select></label><p className="privacy-note"><ShieldCheck size={17} />Audio is sent to GPT-Live-1. Name masking changes displayed text; it does not anonymize the audio.</p><button className="button button-primary full-width" disabled={!provider.configured} onClick={() => { setParent(null); void beginVoice(); }}><Mic size={17} />Start microphone</button><button className="button button-subtle full-width" onClick={beginTypedPractice}>Try a typed practice conversation</button></>}

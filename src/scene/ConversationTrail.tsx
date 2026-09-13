@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { ArrowLeft, ArrowRight, BookOpen, CornerDownRight } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CornerDownRight, Check, Target, History, Sparkles } from 'lucide-react';
 import type { SceneProps, Vec3 } from '../contracts';
 import type { BranchSceneProbe } from './ConversationScene';
 import { formatTime } from '../input/transcript';
 import { resolveLabelLayout } from './layout';
-import { branchPosition, buildConversationTrail, focusedVisit, nextBranches, visibleVisits, type TrailVisit } from './trail';
+import { branchPosition, buildConversationTrail, decisionPoints, focusedDecision, focusedVisit, nextBranches, visibleVisits, type TrailVisit } from './trail';
+import { moveLabels } from '../coach/strategy';
 import './conversation-trail.css';
 
 interface TrailProps extends SceneProps {
@@ -15,6 +16,8 @@ interface TrailProps extends SceneProps {
   mapping: boolean;
   mapError: string | null;
   onRetry: () => void;
+  onChooseBranch: (throughTurnId: string, suggestionId: string) => void;
+  onEditBrief: () => void;
 }
 
 interface Label {
@@ -54,6 +57,7 @@ interface Runtime {
   width: number;
   height: number;
   fit: () => void;
+  pulses: Array<{ mesh: THREE.Mesh; path: THREE.QuadraticBezierCurve3 }>;
 }
 
 declare global {
@@ -64,6 +68,10 @@ declare global {
       selectedVisitId: string | null;
       focusedVisitId: string | null;
       branchCount: number;
+      chosenSuggestionId: string | null;
+      chosenPathMeshes: number;
+      decisionTurnId: string | null;
+      savedDecisions: number;
       view: SceneProps['view'];
       cameraSettled: boolean;
     };
@@ -112,7 +120,7 @@ function settleGrowth(growth: Growth, runtime: Runtime) {
   mark('settled', growth.topicId);
 }
 
-function fitCamera(runtime: Runtime, points: Vec3[]) {
+function fitCamera(runtime: Runtime, points: Vec3[], rightInset = 0) {
   if (!points.length) points = [[0, 0, 0]];
   const box = new THREE.Box3().setFromPoints(points.map(vector));
   const target = box.getCenter(new THREE.Vector3());
@@ -121,7 +129,7 @@ function fitCamera(runtime: Runtime, points: Vec3[]) {
   const right = new THREE.Vector3(1, 0, 0);
   const up = new THREE.Vector3().crossVectors(direction, right).normalize();
   const tanY = Math.tan(THREE.MathUtils.degToRad(runtime.camera.fov / 2));
-  const availableX = Math.max(0.25, (runtime.width - 270) / runtime.width);
+  const availableX = Math.max(0.25, (runtime.width - rightInset - 110) / runtime.width);
   const availableY = Math.max(0.24, (runtime.height - 260) / runtime.height);
   let distance = 13;
   for (const point of points) {
@@ -132,6 +140,8 @@ function fitCamera(runtime: Runtime, points: Vec3[]) {
       Math.abs(delta.dot(up)) / (tanY * availableY) + depth);
   }
   runtime.camera.far = Math.max(300, distance * 5 + box.getSize(new THREE.Vector3()).length() * 2);
+  // Keep perspective geometry in the open map space beside the full-text cards.
+  runtime.camera.setViewOffset(runtime.width, runtime.height, rightInset / 2, 0, runtime.width, runtime.height);
   runtime.camera.updateProjectionMatrix();
   runtime.controls.maxDistance = Math.max(100, distance * 3);
   runtime.goal = { target, position: target.clone().addScaledVector(direction, distance) };
@@ -144,15 +154,22 @@ export default function ConversationTrail(props: TrailProps) {
   const elements = useRef(new Map<string, HTMLButtonElement>());
   const tethers = useRef(new Map<string, SVGLineElement>());
   const heading = useRef<HTMLDivElement>(null);
+  const deck = useRef<HTMLDivElement>(null);
+  const branchElements = useRef(new Map<string, HTMLElement>());
+  const branchTethers = useRef(new Map<string, SVGPathElement>());
   const propsRef = useRef(props);
   propsRef.current = props;
   const [expandedSuggestion, setExpandedSuggestion] = useState<string | null>(null);
   const visits = useMemo(() => buildConversationTrail(session), [session.turns, session.topics, session.turnTopics]);
   const focus = focusedVisit(visits, selectedTopicId, selectedTurnId);
   const shown = useMemo(() => visibleVisits(visits, focus, view), [visits, focus, view]);
-  const branches = useMemo(() => view === 'focus' ? nextBranches(session, focus, visits) : [], [session.suggestions, focus, visits, view]);
+  const decisions = useMemo(() => decisionPoints(session), [session.decisions, session.coachHistory, session.turns]);
+  const decision = focusedDecision(session, focus, selectedTurnId);
+  const branches = useMemo(() => view === 'focus' ? nextBranches(session, focus, visits, selectedTurnId) : [], [session.suggestions, session.decisions, session.coachHistory, focus, visits, view, selectedTurnId]);
+  const chosenId = decision?.chosenSuggestionId ?? null;
+  const direction = decision?.direction ?? (!selectedTurnId ? session.direction : undefined);
   const latest = visits.at(-1);
-  const inspecting = Boolean(focus && focus.id !== latest?.id);
+  const inspecting = Boolean(focus && (focus.id !== latest?.id || (selectedTurnId && selectedTurnId !== session.turns.filter(turn => turn.final).at(-1)?.id)));
   const matchingSource = session.evidence.find(source => source.id === session.evidenceId);
   const analyzedIndex = session.turns.findIndex(turn => turn.id === session.analyzedThroughTurnId);
   const latestFinal = [...session.turns].reverse().find(turn => turn.final);
@@ -166,19 +183,12 @@ export default function ConversationTrail(props: TrailProps) {
       title: visit.label,
       kicker: visit.id === latest?.id ? 'HERE · ' + formatTime(visit.turns.at(-1)!.atMs)
         : `${String(visit.index + 1).padStart(2, '0')} · ${formatTime(visit.turns[0].atMs)}`,
-      detail: view === 'focus' ? visit.turns.at(-1)!.text : undefined,
+      detail: view === 'focus' ? (visit.id === focus?.id && selectedTurnId ? visit.turns.find(turn => turn.id === selectedTurnId)?.text : visit.turns.at(-1)!.text) : undefined,
       turnId: visit.turns.at(-1)!.id, visit, current: visit.id === focus?.id,
       priority: visit.id === focus?.id ? 100 : 65 + visit.index / Math.max(1, visits.length),
     }));
-    branches.forEach((branch, index) => result.push({
-      id: `suggestion:${branch.id}`, kind: 'suggestion',
-      world: branchPosition(focus!.position, index, branches.length), title: branch.text,
-      kicker: branch.recommended ? 'ASK NEXT' : 'OR EXPLORE',
-      detail: expandedSuggestion === branch.id ? branch.rationale : undefined,
-      turnId: branch.turnIds.at(-1), recommended: branch.recommended, priority: branch.recommended ? 98 : 90 - index,
-    }));
     return result.slice(0, 8);
-  }, [shown, branches, focus, latest, view, visits.length, expandedSuggestion]);
+  }, [shown, focus, latest, view, visits.length, selectedTurnId]);
   const currentRef = useRef({ labels, shown, focus, branches, view });
   currentRef.current = { labels, shown, focus, branches, view };
   const identity = `${session.id}:${session.generation}`;
@@ -210,10 +220,11 @@ export default function ConversationTrail(props: TrailProps) {
     controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
     const content = new THREE.Group();
     scene.add(content);
-    const runtime: Runtime = { renderer, scene, camera, controls, content, pickables: [], growth: [], goal: null, manual: false, width: 1, height: 1, fit: () => {} };
+    const runtime: Runtime = { renderer, scene, camera, controls, content, pickables: [], growth: [], goal: null, manual: false, width: 1, height: 1, fit: () => {}, pulses: [] };
     runtime.fit = () => {
       const { shown, branches, focus } = currentRef.current;
-      fitCamera(runtime, [...shown.map(visit => visit.position), ...branches.map((_, index) => branchPosition(focus!.position, index, branches.length))]);
+      const inset = currentRef.current.view === 'focus' && runtime.width > 620 ? (deck.current?.offsetWidth ?? 0) + 48 : 0;
+      fitCamera(runtime, [...shown.map(visit => visit.position), ...branches.map((_, index) => branchPosition(focus!.position, index, branches.length))], inset);
     };
     runtimeRef.current = runtime;
     const resize = () => {
@@ -300,10 +311,11 @@ export default function ConversationTrail(props: TrailProps) {
         projected.copy(vector(label.world)).project(camera);
         if (projected.z < -1 || projected.z > 1 || Math.abs(projected.x) > 1.15 || Math.abs(projected.y) > 1.15) return [];
         return [{ id: label.id, anchorX: (projected.x + 1) * runtime.width / 2, anchorY: (1 - projected.y) * runtime.height / 2,
-          width: element.offsetWidth, height: element.offsetHeight, priority: label.priority }];
+          width: element.offsetWidth, height: element.offsetHeight, priority: label.priority,
+          preferBelow: label.current && currentRef.current.view === 'focus' }];
       });
       const reserved = heading.current;
-      const obstacles = reserved ? [{ left: reserved.offsetLeft, top: reserved.offsetTop, width: reserved.offsetWidth, height: reserved.offsetHeight }] : [];
+      const obstacles = [reserved, deck.current].filter((item): item is HTMLDivElement => Boolean(item)).map(item => ({ left: item.offsetLeft, top: item.offsetTop, width: item.offsetWidth, height: item.offsetHeight }));
       const placed = resolveLabelLayout(candidates, runtime.width, runtime.height, 8, 14, obstacles);
       const byId = new Map(placed.map(label => [label.id, label]));
       for (const label of currentRef.current.labels) {
@@ -325,6 +337,23 @@ export default function ConversationTrail(props: TrailProps) {
           }
         }
       }
+      const sceneRect = container.getBoundingClientRect();
+      const deckRect = deck.current?.getBoundingClientRect();
+      for (const [index, branch] of currentRef.current.branches.entries()) {
+        const element = branchElements.current.get(branch.id);
+        const tether = branchTethers.current.get(branch.id);
+        if (!element || !tether || !currentRef.current.focus || !deckRect) continue;
+        const card = element.getBoundingClientRect();
+        const visible = card.bottom > deckRect.top && card.top < deckRect.bottom;
+        tether.style.display = visible ? '' : 'none';
+        const point = vector(branchPosition(currentRef.current.focus.position, index, currentRef.current.branches.length)).project(camera);
+        const x1 = (point.x + 1) * runtime.width / 2;
+        const y1 = (1 - point.y) * runtime.height / 2;
+        const x2 = card.left - sceneRect.left;
+        const y2 = Math.max(deckRect.top + 12, Math.min(deckRect.bottom - 12, card.top + card.height / 2)) - sceneRect.top;
+        tether.setAttribute('d', `M ${x1} ${y1} C ${x1 + 35} ${y1}, ${x2 - 45} ${y2}, ${x2} ${y2}`);
+      }
+      for (const pulse of runtime.pulses) pulse.mesh.position.copy(pulse.path.getPoint(reduceMotion ? 0.6 : (now % 2600) / 2600));
       probe.visibleLabels = placed.map(placement => ({ ...placement, kind: currentRef.current.labels.find(label => label.id === placement.id)!.kind, fontSize: 16 }));
       probe.camera = { position: tuple(camera.position), target: tuple(controls.target) };
       if (window.__branchTrail) window.__branchTrail.cameraSettled = runtime.goal === null;
@@ -353,7 +382,7 @@ export default function ConversationTrail(props: TrailProps) {
   }, []);
 
   const geometryKey = JSON.stringify({ identity, visits: shown.map(visit => [visit.id, visit.position, visit.topicId, visit.turns.at(-1)!.id, visit.practice]), focus: focus?.id,
-    branches: branches.map(branch => [branch.id, branch.recommended]), view });
+    branches: branches.map(branch => [branch.id, branch.recommended]), chosenId, view });
   useLayoutEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -366,6 +395,7 @@ export default function ConversationTrail(props: TrailProps) {
     for (const child of [...runtime.content.children]) { dispose(child); runtime.content.remove(child); }
     runtime.pickables = [];
     runtime.growth = [];
+    runtime.pulses = [];
     const styles: BranchSceneProbe['pathStyles'] = {
       actual: { material: 'LineBasicMaterial', dashed: false, dashSize: null, gapSize: null, opacity: 0.85 },
       practice: { material: 'LineDashedMaterial', dashed: true, dashSize: 0.08, gapSize: 0.13, opacity: 0.85 },
@@ -432,13 +462,30 @@ export default function ConversationTrail(props: TrailProps) {
     }
     branches.forEach((branch, index) => {
       const end = branchPosition(focus!.position, index, branches.length);
-      lineBetween(focus!.position, end, 'suggested', branch.recommended ? 0.9 : 0.5);
-      const node = new THREE.Mesh(new THREE.OctahedronGeometry(0.12), new THREE.MeshBasicMaterial({ color: GOLD, wireframe: !branch.recommended }));
+      const chosen = branch.id === chosenId;
+      const path = curve(focus!.position, end, true);
+      if (chosen) {
+        for (const [radius, opacity] of [[0.045, 1], [0.12, 0.10]]) {
+          const tube = new THREE.Mesh(new THREE.TubeGeometry(path, 48, radius, 8, false), new THREE.MeshBasicMaterial({ color: MINT, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+          tube.userData.kind = 'chosen'; runtime.content.add(tube);
+        }
+        const spark = new THREE.Mesh(new THREE.SphereGeometry(0.095, 12, 8), new THREE.MeshBasicMaterial({ color: '#e4fff6' }));
+        runtime.content.add(spark); runtime.pulses.push({ mesh: spark, path });
+      } else lineBetween(focus!.position, end, 'suggested', chosenId ? 0.25 : branch.recommended ? 0.9 : 0.5);
+      const node = new THREE.Mesh(new THREE.OctahedronGeometry(chosen ? 0.19 : 0.12), new THREE.MeshBasicMaterial({ color: chosen ? MINT : GOLD, wireframe: !chosen && !branch.recommended }));
       node.position.copy(vector(end));
       node.userData = { turnId: branch.turnIds.at(-1), topicId: branch.topicId };
       runtime.content.add(node);
       runtime.pickables.push(node);
     });
+    for (const visit of shown) {
+      const past = decisions.filter(item => item.chosenSuggestionId && visit.turns.some(turn => turn.id === item.throughTurnId));
+      if (past.length && visit.id !== focus?.id) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.025, 8, 40), new THREE.MeshBasicMaterial({ color: MINT }));
+        ring.position.copy(vector(visit.position)); ring.rotation.x = Math.PI / 2;
+        runtime.content.add(ring);
+      }
+    }
     if (focus && view !== 'overview') {
       const grid = new THREE.GridHelper(90, 45, '#3c6b62', '#294b46');
       grid.position.set(focus.position[0], -2.8, focus.position[2]);
@@ -457,8 +504,8 @@ export default function ConversationTrail(props: TrailProps) {
       probe.pathStyles = styles;
     }
     window.__branchTrail = { visits: visits.map(visit => ({ id: visit.id, topicId: visit.topicId, position: visit.position, turnIds: visit.turns.map(turn => turn.id), returning: visit.returning })),
-      renderedVisits: shown.length, selectedVisitId: selectedTurnId ? focus?.id ?? null : null, focusedVisitId: focus?.id ?? null, branchCount: branches.length, view, cameraSettled: !runtime.goal };
-  }, [geometryKey]);
+      renderedVisits: shown.length, selectedVisitId: selectedTurnId ? focus?.id ?? null : null, focusedVisitId: focus?.id ?? null, branchCount: branches.length, chosenSuggestionId: chosenId, chosenPathMeshes: runtime.content.children.filter(child => child.userData.kind === 'chosen').length, decisionTurnId: decision?.throughTurnId ?? null, savedDecisions: decisions.length, view, cameraSettled: !runtime.goal };
+  }, [geometryKey, decisions]);
 
   // Explicit navigation fits its destination even when following is paused.
   useEffect(() => {
@@ -475,13 +522,32 @@ export default function ConversationTrail(props: TrailProps) {
     if (window.__branchScene) window.__branchScene.following = follow;
   }, [follow, focus?.id, branches.length, identity]);
 
-  const selectVisit = (visit: TrailVisit | undefined) => { if (visit) props.onSelectTurn(visit.turns.at(-1)!.id); };
+  const selectVisit = (visit: TrailVisit | undefined) => { if (visit) props.onSelectTurn(focusedDecision(session, visit)?.throughTurnId ?? visit.turns.at(-1)!.id); };
   const pendingCount = session.turns.filter(turn => turn.final && !session.turnTopics[turn.id]).length;
   return <div className="conversation-trail" data-view={view} data-testid="conversation-scene">
     <div ref={mount} className="conversation-trail__viewport" />
     <div className="conversation-trail__shade" aria-hidden="true" />
-    <div ref={heading} className="trail-heading"><span className="trail-eyebrow">THE CONVERSATION TRAIL</span><h1>{view === 'overview' ? 'The path you took.' : inspecting ? 'Revisit this moment.' : 'See where this could go.'}</h1><p>{view === 'overview' ? `${visits.length} moments · ${session.topics.length} topics · select a moment to explore` : inspecting ? 'The words and context from this point in the conversation.' : 'Follow the conversation. Choose your next question.'}</p></div>
+    <div ref={heading} className="trail-heading">
+      <span className="trail-eyebrow">{inspecting ? 'A MOMENT WORTH REVISITING' : 'EVERY CONVERSATION HAS A DIRECTION'}</span>
+      <h1>{view === 'overview' ? 'The path you took.' : inspecting ? 'There was another way.' : 'Choose your next move.'}</h1>
+      <button className="trail-goal" onClick={props.onEditBrief}><Target size={17} /><span><small>CALL GOAL</small><strong>{session.brief?.goal || 'Set a destination for this call'}</strong></span><ArrowRight size={15} /></button>
+      {direction && <details className="trail-readiness"><summary><span className={`stage-dot stage-${direction.stage}`} />{moveLabels[direction.stage]}<span>Why this move</span></summary><p>{direction.summary}</p>{direction.established.length > 0 && <div><small>ESTABLISHED</small>{direction.established.map(item => <p key={item}><Check size={12} />{item}</p>)}</div>}{direction.blockers.length > 0 && <div><small>STILL TO RESOLVE</small>{direction.blockers.map(item => <p key={item}>{item}</p>)}</div>}</details>}
+    </div>
     <svg className="trail-tethers" aria-hidden="true">{labels.map(label => <line key={label.id} ref={element => { if (element) tethers.current.set(label.id, element); else tethers.current.delete(label.id); }} stroke={label.kind === 'suggestion' ? '#d8bd7155' : '#a9ddb355'} strokeWidth="1" />)}</svg>
+    <svg className="trail-branch-tethers" aria-hidden="true">{branches.map(branch => <path key={branch.id} ref={element => { if (element) branchTethers.current.set(branch.id, element); else branchTethers.current.delete(branch.id); }} className={branch.id === chosenId ? 'is-chosen' : ''} />)}</svg>
+    {view === 'focus' && <div ref={deck} className="branch-deck" aria-label={inspecting ? 'Saved alternative paths' : 'Recommended paths'}>
+      <div className="branch-deck__heading"><span><CornerDownRight size={15} />{inspecting ? 'Paths from this moment' : chosenId ? 'Your chosen direction' : 'Where to go next'}</span><small>{branches.length ? `${branches.length} paths` : 'Listening'}</small></div>
+      {!branches.length && <div className="branch-deck__empty"><Sparkles size={20} /><p>{session.guidanceStatus === 'analysing' ? 'Finding the next move toward your goal…' : inspecting ? 'No recommendations were saved at this exchange. Choose a saved decision below.' : 'Next moves will appear after a completed exchange.'}</p></div>}
+      {branches.map((branch, index) => <article key={`${decision?.throughTurnId}:${branch.id}`} ref={element => { if (element) branchElements.current.set(branch.id, element); else branchElements.current.delete(branch.id); }} className={`branch-option${branch.id === chosenId ? ' is-chosen' : ''}${branch.recommended ? ' is-recommended' : ''}`} data-suggestion-id={branch.id} data-intent={branch.intent ?? 'discover'} style={{ '--branch-index': index } as React.CSSProperties}>
+        <button className="branch-option__inspect" aria-expanded={expandedSuggestion === branch.id} aria-label={`Explore path: ${branch.text}`} onClick={() => setExpandedSuggestion(value => value === branch.id ? null : branch.id)}>
+          <span className="branch-option__meta"><span className="branch-option__number">{branch.id === chosenId ? <Check size={15} /> : `0${index + 1}`}</span><span>{branch.intent ? moveLabels[branch.intent] : branch.kind === 'response' ? 'Respond' : 'Ask'}</span><small>{branch.id === chosenId ? 'CHOSEN' : branch.recommended ? 'RECOMMENDED' : 'ALTERNATIVE'}</small></span>
+          <span className="branch-option__text">{branch.text}</span>
+        </button>
+        {expandedSuggestion === branch.id && <p className="branch-option__reason">{branch.rationale}</p>}
+        <div className="branch-option__footer"><button className="branch-option__why" onClick={() => setExpandedSuggestion(value => value === branch.id ? null : branch.id)}>{expandedSuggestion === branch.id ? 'Hide reasoning' : 'Why this move'}</button>{decision && <button className="branch-option__choose" disabled={branch.id === chosenId} onClick={() => props.onChooseBranch(decision.throughTurnId, branch.id)}>{branch.id === chosenId ? <><Check size={13} />Chosen path</> : <>{inspecting ? 'Try this alternative' : 'Choose this path'}<ArrowRight size={13} /></>}</button>}</div>
+      </article>)}
+      {chosenId && <p className="branch-deck__note">{inspecting ? 'Your original choice is preserved. Try an alternative in a separate practice.' : 'Chosen for your next move. Return to this moment any time to explore the alternatives.'}</p>}
+    </div>}
     <div className="trail-labels" aria-label="Conversation map details">
       {labels.map(label => <button key={label.id} ref={element => { if (element) elements.current.set(label.id, element); else elements.current.delete(label.id); }}
         className={`trail-card trail-card--${label.kind}${label.current ? ' is-current' : ''}${label.recommended ? ' is-recommended' : ''}${label.visit?.practice ? ' is-practice' : ''}`}
@@ -501,12 +567,13 @@ export default function ConversationTrail(props: TrailProps) {
     </div>
     {!visits.length && <div className="trail-empty"><span className="trail-empty__point" /><h2>The trail starts with a conversation.</h2><p>{pendingCount ? 'Mapping the first exchanges…' : 'Press Play or start speaking to see the first moment.'}</p></div>}
     <div className="trail-status" role="status">
-      {props.mapError ? <><span>Topics could not update.</span><button onClick={props.onRetry}>Retry analysis</button></> : <span>{props.mapping || pendingCount ? `Mapping ${pendingCount || 'new'} ${pendingCount === 1 ? 'exchange' : 'exchanges'}…` : session.guidanceStatus === 'error' ? 'Guidance unavailable · previous questions shown' : session.provider === 'astra' ? 'AI guidance · Astra' : 'Local preview · keyword rules'}{adviceBehind && branches.length ? ` · Earlier suggestions, through turn ${Math.max(0, analyzedIndex + 1)}` : ''}</span>}
+      {props.mapError ? <><span>Topics could not update.</span><button onClick={props.onRetry}>Retry analysis</button></> : <span>{props.mapping || pendingCount ? `Mapping ${pendingCount || 'new'} ${pendingCount === 1 ? 'exchange' : 'exchanges'}…` : session.guidanceStatus === 'error' ? 'Guidance unavailable · saved moves shown' : session.provider === 'astra' ? 'AI guidance · Astra' : 'Local preview · keyword rules'}{adviceBehind && branches.length ? ` · Earlier suggestions, through turn ${Math.max(0, analyzedIndex + 1)}` : ''}</span>}
       {matchingSource && !inspecting && <button onClick={props.onOpenSource}><BookOpen size={14} />Related source</button>}
     </div>
     {focus && <nav className="trail-navigator" aria-label="Conversation moments">
       <button aria-label="Previous moment" disabled={focus.index === 0} onClick={() => selectVisit(visits[focus.index - 1])}><ArrowLeft size={17} /></button>
       <label><span>Moment</span><select aria-label="Jump to conversation moment" value={focus.id} onChange={event => selectVisit(visits.find(visit => visit.id === event.target.value))}>{visits.map(visit => <option key={visit.id} value={visit.id}>{visit.index + 1} · {visit.label}{visit.returning ? ' (revisited)' : ''}</option>)}</select><span>of {visits.length}</span></label>
+      {decisions.length > 0 && <label className="decision-history"><History size={14} /><select aria-label="Revisit saved paths" value={decision?.throughTurnId ?? ''} onChange={event => { if (event.target.value) props.onSelectTurn(event.target.value); }}><option value="" disabled>Saved paths</option>{decisions.map(item => { const turn = session.turns.find(turn => turn.id === item.throughTurnId)!; const chosen = item.suggestions.find(suggestion => suggestion.id === item.chosenSuggestionId); return <option key={item.throughTurnId} value={item.throughTurnId}>{formatTime(turn.atMs)} · {chosen ? `Chose ${chosen.intent ? moveLabels[chosen.intent] : 'a path'}` : `${item.suggestions.length} alternatives`}</option>; })}</select></label>}
       <button aria-label="Next moment" disabled={focus.index === visits.length - 1} onClick={() => selectVisit(visits[focus.index + 1])}><ArrowRight size={17} /></button>
     </nav>}
   </div>;

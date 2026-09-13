@@ -1,6 +1,6 @@
 # Branch
 
-Branch turns a sales conversation into a map you can explore. Inspect the next question, revisit an earlier exchange, and practise another response while keeping the original conversation intact.
+Branch turns a sales conversation into a map you can explore. Choose a next move, revisit saved alternatives, and practise another response while keeping the original conversation intact.
 
 Built for the GPT-6 Astra Hackathon in Singapore, 13 September 2026. Team: soil-rose, Vi + Kuan Yu.
 
@@ -8,11 +8,15 @@ Built for the GPT-6 Astra Hackathon in Singapore, 13 September 2026. Team: soil-
 
 The hosted demo connects to Astra and GPT-Live-1 through its server. The API key stays in the hosting service's secret store. The opening sample uses labelled local preview rules. New exchanges use AI when the connection is available.
 
-1. Press Play or Next exchange.
-2. Select a moment to inspect its transcript.
-3. Open Coach & evidence to see possible questions and source passages.
-4. Open Review and select Practise from this moment.
-5. Enter another response. Return to original to restore the first attempt.
+1. Open Call brief. Set your goal, offer, customer fit, pricing, and limits.
+2. Press Play or Next exchange. Read the full recommendations beside the map.
+3. Select Choose this path. The chosen branch lights up. The alternatives remain available.
+4. Use the saved-path selector to revisit an earlier decision.
+5. Select Try this alternative to open a separate practice. Return to original to restore the first attempt.
+
+The coach can suggest discovery, qualification, a recommendation, an objection response, or a concrete ask. It uses the visible conversation and call brief to decide the next move. A branch choice records your intention. It does not add words to the transcript or imply customer agreement.
+
+Your call brief and saved alternatives are included in session exports. Long recommendations wrap in full. Scroll the cards when more space is needed.
 
 The demo opens in the 3D map. Select Simple view or use `?view=simple` for a topic list. Import [the fictional 48-turn call](docs/mock-sales-call.txt) to explore a longer conversation.
 
@@ -31,7 +35,7 @@ To connect Astra and GPT-Live-1, copy `.env.example` to `.env.local`. Set `OPENA
 
 ## How Astra is used
 
-GPT-6 Astra maps completed transcript turns to topics through the Responses API. A separate request produces suggested questions, source references, and coaching feedback. The map can update while coaching is pending.
+GPT-6 Astra maps completed transcript turns to topics through the Responses API. A separate request produces goal-directed moves, source references, and coaching feedback. The map can update while coaching is pending.
 
 Each request receives only the conversation through the current moment. Structured results must pass validation before they change the scene. Seeking or starting a retry invalidates old responses. Existing topic identities and positions remain stable.
 

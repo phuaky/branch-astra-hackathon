@@ -35,6 +35,7 @@ export interface ProjectedLabel {
   width: number;
   height: number;
   priority: number;
+  preferBelow?: boolean;
 }
 
 export interface PlacedLabel extends ProjectedLabel {
@@ -294,7 +295,7 @@ export function resolveLabelLayout(
       );
       const top = Math.min(
         viewportHeight - candidate.height - bottomInset,
-        Math.max(topInset, candidate.anchorY - candidate.height + offsetY),
+        Math.max(topInset, candidate.preferBelow ? candidate.anchorY + 40 + offsetY : candidate.anchorY - candidate.height + offsetY),
       );
       const proposed: PlacedLabel = { ...candidate, left, top };
       if (placed.every((other) => !overlaps(proposed, other, padding)) && obstacles.every(other => !overlaps(proposed, other, padding))) {

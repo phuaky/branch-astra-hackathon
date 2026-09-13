@@ -115,6 +115,8 @@ describe('local API credential boundary', () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId: 's1', generation: 4, topics: [], evidence: [],
+        brief: { goal: 'Book a demo', offer: 'A workflow pilot', idealCustomer: 'Operations', pricing: 'Unknown', constraints: 'No guarantees' },
+        chosenMove: { throughTurnId: 't1', text: 'Could we book a demo?', intent: 'commit' },
         turns: [
           { id: 't1', sessionId: 's1', speaker: 'Customer', role: 'customer', atMs: 0, text: 'Current concern', revision: 1, final: true, sourceMode: 'replay' },
           { id: 'partial', sessionId: 's1', speaker: 'Customer', role: 'customer', atMs: 1_000, text: 'unfinished future fragment', revision: 1, final: false, sourceMode: 'replay' },
@@ -139,12 +141,15 @@ describe('local API credential boundary', () => {
     expect(topicWireSchema.properties.parentId.anyOf).toContainEqual({ type: 'null' });
     expect(JSON.stringify(captured.text.format.schema)).not.toContain('"oneOf"');
     expect(JSON.stringify(captured.text.format.schema)).not.toContain('"maxLength"');
-    expect(captured.instructions).toContain('one compact sentence');
-    expect(captured.instructions).toContain('Prefer 18 words or fewer');
+    expect(captured.instructions).toContain('Write each suggestion in full');
+    expect(captured.instructions).toContain('Coach toward the brief.goal');
+    expect(captured.instructions).toContain('A chosenMove records the seller’s intended direction only');
     expect(captured.instructions).toContain('total and maximum must always be JSON integers');
     expect(capturedOptions).toEqual({ signal: request.signal, timeout: 20_000 });
     expect(providerInput.turns.map((turn: { id: string }) => turn.id)).toEqual(['t0']);
     expect(providerInput.pendingTurnIds).toEqual(['t0']);
+    expect(providerInput.brief.goal).toBe('Book a demo');
+    expect(providerInput.chosenMove).toEqual({ throughTurnId: 't0', text: 'Could we book a demo?', intent: 'commit' });
     expect(captured.input).not.toContain('unfinished future fragment');
     expect(body).toMatchObject({
       sessionId: 's1', generation: 4, throughTurnId: 't1', provider: 'astra',

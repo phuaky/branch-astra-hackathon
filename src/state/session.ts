@@ -1,4 +1,5 @@
 import type { Assessment, CoachRequest, CoachUpdate, EvidenceSource, MapUpdate, Session, SourceMode, Topic, Turn, Vec3 } from '../contracts';
+import { callBriefSchema, directionSchema, suggestionSchema } from '../coach/schema';
 
 export const RUBRIC_VERSION = 'branch-v1' as const;
 export const dimensionLabels = {
@@ -16,6 +17,7 @@ export function createSession(
     id, title, mode, timing, generation: 0, turns: [], topics: [], turnTopics: {}, coachHistory: [], mapHistory: [],
     suggestions: [], evidence: [], evidenceId: null, assessment: null, activeTopicId: null,
     analyzedThroughTurnId: null, guidanceStatus: 'idle', guidanceError: null, provider: null,
+    decisions: [],
   };
 }
 
@@ -44,6 +46,8 @@ export function topicPosition(index: number): Vec3 {
 
 export function buildCoachRequest(session: Session): CoachRequest {
   const turns = session.turns.filter(turn => turn.final).map(turn => ({ ...turn }));
+  const decision = [...(session.decisions ?? [])].reverse().find(item => item.chosenSuggestionId && turns.some(turn => turn.id === item.throughTurnId));
+  const chosen = decision?.suggestions.find(item => item.id === decision.chosenSuggestionId);
   return {
     sessionId: session.id, generation: session.generation,
     turns,
@@ -51,6 +55,8 @@ export function buildCoachRequest(session: Session): CoachRequest {
     pendingTurnIds: turns.filter(turn => session.turnTopics[turn.id] === undefined).map(turn => turn.id),
     topics: session.topics.map(({ id, key, label, summary }) => ({ id, key, label, summary })),
     evidence: structuredClone(session.evidence),
+    ...(session.brief ? { brief: structuredClone(session.brief) } : {}),
+    ...(chosen && decision ? { chosenMove: { throughTurnId: decision.throughTurnId, text: chosen.text, intent: chosen.intent } } : {}),
   };
 }
 
@@ -168,8 +174,15 @@ export function applyCoachUpdate(session: Session, update: CoachUpdate): Session
   const evidenceId = session.evidence.some(item => item.id === update.evidenceId) ? update.evidenceId : null;
   const latestMappedIndex = session.turns.reduce((latest, turn, index) => session.turnTopics[turn.id] ? index : latest, -1);
   const newerMappedTopicId = latestMappedIndex > throughIndex ? session.turnTopics[session.turns[latestMappedIndex].id] : null;
+  const direction = update.direction ? directionSchema.safeParse(update.direction) : null;
+  if (direction && !direction.success) return session;
+  const decisions = [...(session.decisions ?? [])];
+  const decisionIndex = decisions.findIndex(item => item.throughTurnId === update.throughTurnId);
+  const snapshot = { throughTurnId: update.throughTurnId, suggestions: structuredClone(suggestions), chosenSuggestionId: null, direction: direction?.data };
+  if (decisionIndex < 0 && suggestions.length) decisions.push(snapshot);
+  else if (decisionIndex >= 0 && !decisions[decisionIndex].chosenSuggestionId) decisions[decisionIndex] = snapshot;
   return {
-    ...session, topics, turnTopics, suggestions, evidenceId,
+    ...session, topics, turnTopics, suggestions, evidenceId, decisions, direction: direction?.data,
     assessment: normalizeAssessment(update.assessment, allowed, update.throughTurnId),
     activeTopicId: newerMappedTopicId ?? activeTopicId,
     analyzedThroughTurnId: update.throughTurnId,
@@ -187,6 +200,7 @@ export function rebuildSession(
   const next = createSession(session.title, session.mode, session.id, session.timing);
   next.generation = session.generation + 1;
   next.evidence = structuredClone(session.evidence);
+  next.brief = session.brief ? structuredClone(session.brief) : undefined;
   next.turns = visibleTurns.reduce((turns, turn) => {
     const holder = { ...next, turns };
     return upsertTurn(holder, { ...turn, sessionId: session.id }).turns;
@@ -200,8 +214,33 @@ export function rebuildSession(
     .reduce((state, update) => applyMapUpdate(state, {
       ...update, sessionId: state.id, generation: state.generation,
     }), next);
-  return history.filter(update => finalIds.has(update.throughTurnId)).reduce((state, update) =>
+  const restored = history.filter(update => finalIds.has(update.throughTurnId)).reduce((state, update) =>
     applyCoachUpdate(state, { ...update, sessionId: state.id, generation: state.generation }), mapped);
+  restored.decisions = mergeDecisions(restored, session.decisions ?? []);
+  return restored;
+}
+
+function mergeDecisions(session: Session, saved: NonNullable<Session['decisions']>): NonNullable<Session['decisions']> {
+  const allowed = new Set(session.turns.filter(turn => turn.final).map(turn => turn.id));
+  const decisions = new Map((session.decisions ?? []).map(item => [item.throughTurnId, item]));
+  for (const item of saved) {
+    if (!allowed.has(item.throughTurnId)) continue;
+    const boundary = session.turns.findIndex(turn => turn.id === item.throughTurnId);
+    const prefix = new Set(session.turns.slice(0, boundary + 1).map(turn => turn.id));
+    if (!Array.isArray(item.suggestions) || item.suggestions.length > 3 || !item.suggestions.every(suggestion =>
+      suggestionSchema.safeParse(suggestion).success && session.topics.some(topic => topic.id === suggestion.topicId)
+      && suggestion.turnIds.every(id => prefix.has(id)))) continue;
+    if (item.chosenSuggestionId !== null && !item.suggestions.some(suggestion => suggestion.id === item.chosenSuggestionId)) continue;
+    if (item.direction && !directionSchema.safeParse(item.direction).success) continue;
+    decisions.set(item.throughTurnId, structuredClone(item));
+  }
+  return [...decisions.values()].sort((a, b) => session.turns.findIndex(turn => turn.id === a.throughTurnId) - session.turns.findIndex(turn => turn.id === b.throughTurnId));
+}
+
+export function chooseBranch(session: Session, throughTurnId: string, suggestionId: string): Session {
+  const decision = session.decisions?.find(item => item.throughTurnId === throughTurnId);
+  if (!decision?.suggestions.some(item => item.id === suggestionId)) return session;
+  return { ...session, decisions: session.decisions!.map(item => item === decision ? { ...item, chosenSuggestionId: suggestionId } : item) };
 }
 
 export function forkSession(parent: Session, throughTurnId: string, id: string = crypto.randomUUID()): Session {
@@ -242,6 +281,7 @@ export function importSession(text: string): Session {
   const safe = createSession(session.title, session.mode, session.id, session.timing ?? 'estimated');
   safe.generation = session.generation;
   safe.evidence = structuredClone(session.evidence);
+  if (session.brief !== undefined) safe.brief = callBriefSchema.parse(session.brief);
   const turnIds = new Set<string>();
   for (const turn of session.turns) {
     if (typeof turn.id !== 'string' || !turn.id || turnIds.has(turn.id) || typeof turn.text !== 'string'
@@ -276,6 +316,10 @@ export function importSession(text: string): Session {
       throw new Error('This session contains invalid retry metadata.');
     }
     restored.fork = structuredClone(session.fork);
+  }
+  if (session.decisions !== undefined) {
+    if (!Array.isArray(session.decisions) || session.decisions.some((item: unknown) => !item || typeof item !== 'object')) throw new Error('This session contains invalid decision history.');
+    restored.decisions = mergeDecisions(restored, session.decisions);
   }
   return restored;
 }
