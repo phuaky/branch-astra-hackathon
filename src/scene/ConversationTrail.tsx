@@ -165,8 +165,20 @@ export default function ConversationTrail(props: TrailProps) {
   const shown = useMemo(() => visibleVisits(visits, focus, view), [visits, focus, view]);
   const decisions = useMemo(() => decisionPoints(session), [session.decisions, session.coachHistory, session.turns]);
   const decision = focusedDecision(session, focus, selectedTurnId);
-  const branches = useMemo(() => view === 'focus' ? nextBranches(session, focus, visits, selectedTurnId) : [], [session.suggestions, session.decisions, session.coachHistory, focus, visits, view, selectedTurnId]);
+  const branches = useMemo(() => nextBranches(session, focus, visits, selectedTurnId), [session.suggestions, session.decisions, session.coachHistory, focus, visits, selectedTurnId]);
   const chosenId = decision?.chosenSuggestionId ?? null;
+  // Wide views retain the decision fans, so zooming out does not erase choices.
+  const sceneBranches = useMemo(() => (view === 'focus' ? (focus ? [focus] : []) : shown).flatMap(visit => {
+    const snapshot = visit.id === focus?.id ? decision : focusedDecision(session, visit);
+    const options = visit.id === focus?.id ? branches : nextBranches(session, visit, visits);
+    return options.map((branch, index) => ({ branch, visit,
+      throughTurnId: snapshot?.throughTurnId ?? visit.turns.at(-1)!.id,
+      chosen: branch.id === snapshot?.chosenSuggestionId,
+      hasChoice: Boolean(snapshot?.chosenSuggestionId),
+      end: view === 'focus' ? branchPosition(visit.position, index, options.length)
+        : [visit.position[0] + 1.5 + index * 0.7, visit.position[1] + 2.6 + index * 1.6, visit.position[2] + 0.6] as Vec3,
+    }));
+  }), [view, shown, focus, decision, branches, session, visits]);
   const direction = decision?.direction ?? (!selectedTurnId ? session.direction : undefined);
   const latest = visits.at(-1);
   const inspecting = Boolean(focus && (focus.id !== latest?.id || (selectedTurnId && selectedTurnId !== session.turns.filter(turn => turn.final).at(-1)?.id)));
@@ -189,8 +201,8 @@ export default function ConversationTrail(props: TrailProps) {
     }));
     return result.slice(0, 8);
   }, [shown, focus, latest, view, visits.length, selectedTurnId]);
-  const currentRef = useRef({ labels, shown, focus, branches, view });
-  currentRef.current = { labels, shown, focus, branches, view };
+  const currentRef = useRef({ labels, shown, focus, branches, sceneBranches, view });
+  currentRef.current = { labels, shown, focus, branches, sceneBranches, view };
   const identity = `${session.id}:${session.generation}`;
   const knownRef = useRef<{ identity: string; visits: Set<string>; topics: Set<string> }>({ identity, visits: new Set(), topics: new Set() });
 
@@ -222,9 +234,9 @@ export default function ConversationTrail(props: TrailProps) {
     scene.add(content);
     const runtime: Runtime = { renderer, scene, camera, controls, content, pickables: [], growth: [], goal: null, manual: false, width: 1, height: 1, fit: () => {}, pulses: [] };
     runtime.fit = () => {
-      const { shown, branches, focus } = currentRef.current;
+      const { shown, sceneBranches } = currentRef.current;
       const inset = currentRef.current.view === 'focus' && runtime.width > 620 ? (deck.current?.offsetWidth ?? 0) + 48 : 0;
-      fitCamera(runtime, [...shown.map(visit => visit.position), ...branches.map((_, index) => branchPosition(focus!.position, index, branches.length))], inset);
+      fitCamera(runtime, [...shown.map(visit => visit.position), ...sceneBranches.map(item => item.end)], inset);
     };
     runtimeRef.current = runtime;
     const resize = () => {
@@ -382,7 +394,7 @@ export default function ConversationTrail(props: TrailProps) {
   }, []);
 
   const geometryKey = JSON.stringify({ identity, visits: shown.map(visit => [visit.id, visit.position, visit.topicId, visit.turns.at(-1)!.id, visit.practice]), focus: focus?.id,
-    branches: branches.map(branch => [branch.id, branch.recommended]), chosenId, view });
+    branches: sceneBranches.map(item => [item.branch.id, item.branch.recommended, item.throughTurnId, item.chosen, item.end]), chosenId, view });
   useLayoutEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -460,10 +472,8 @@ export default function ConversationTrail(props: TrailProps) {
         runtime.content.add(pool);
       }
     }
-    branches.forEach((branch, index) => {
-      const end = branchPosition(focus!.position, index, branches.length);
-      const chosen = branch.id === chosenId;
-      const path = curve(focus!.position, end, true);
+    sceneBranches.forEach(({ branch, visit, end, chosen, hasChoice, throughTurnId }) => {
+      const path = curve(visit.position, end, true);
       if (chosen) {
         for (const [radius, opacity] of [[0.045, 1], [0.12, 0.10]]) {
           const tube = new THREE.Mesh(new THREE.TubeGeometry(path, 48, radius, 8, false), new THREE.MeshBasicMaterial({ color: MINT, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -471,10 +481,10 @@ export default function ConversationTrail(props: TrailProps) {
         }
         const spark = new THREE.Mesh(new THREE.SphereGeometry(0.095, 12, 8), new THREE.MeshBasicMaterial({ color: '#e4fff6' }));
         runtime.content.add(spark); runtime.pulses.push({ mesh: spark, path });
-      } else lineBetween(focus!.position, end, 'suggested', chosenId ? 0.25 : branch.recommended ? 0.9 : 0.5);
+      } else lineBetween(visit.position, end, 'suggested', hasChoice ? 0.35 : branch.recommended ? 0.9 : 0.5);
       const node = new THREE.Mesh(new THREE.OctahedronGeometry(chosen ? 0.19 : 0.12), new THREE.MeshBasicMaterial({ color: chosen ? MINT : GOLD, wireframe: !chosen && !branch.recommended }));
       node.position.copy(vector(end));
-      node.userData = { turnId: branch.turnIds.at(-1), topicId: branch.topicId };
+      node.userData = { turnId: throughTurnId, topicId: branch.topicId };
       runtime.content.add(node);
       runtime.pickables.push(node);
     });
@@ -500,7 +510,7 @@ export default function ConversationTrail(props: TrailProps) {
       probe.activeTopicId = session.activeTopicId;
       probe.selectedTopicId = selectedTopicId;
       probe.topicPositions = Object.fromEntries(session.topics.map(topic => [topic.id, [...topic.position] as Vec3]));
-      probe.paths = { actual: actualCount, practice: practiceCount, suggested: branches.length };
+      probe.paths = { actual: actualCount, practice: practiceCount, suggested: sceneBranches.length };
       probe.pathStyles = styles;
     }
     window.__branchTrail = { visits: visits.map(visit => ({ id: visit.id, topicId: visit.topicId, position: visit.position, turnIds: visit.turns.map(turn => turn.id), returning: visit.returning })),
@@ -534,7 +544,7 @@ export default function ConversationTrail(props: TrailProps) {
       {direction && <details className="trail-readiness"><summary><span className={`stage-dot stage-${direction.stage}`} />{moveLabels[direction.stage]}<span>Why this move</span></summary><p>{direction.summary}</p>{direction.established.length > 0 && <div><small>ESTABLISHED</small>{direction.established.map(item => <p key={item}><Check size={12} />{item}</p>)}</div>}{direction.blockers.length > 0 && <div><small>STILL TO RESOLVE</small>{direction.blockers.map(item => <p key={item}>{item}</p>)}</div>}</details>}
     </div>
     <svg className="trail-tethers" aria-hidden="true">{labels.map(label => <line key={label.id} ref={element => { if (element) tethers.current.set(label.id, element); else tethers.current.delete(label.id); }} stroke={label.kind === 'suggestion' ? '#d8bd7155' : '#a9ddb355'} strokeWidth="1" />)}</svg>
-    <svg className="trail-branch-tethers" aria-hidden="true">{branches.map(branch => <path key={branch.id} ref={element => { if (element) branchTethers.current.set(branch.id, element); else branchTethers.current.delete(branch.id); }} className={branch.id === chosenId ? 'is-chosen' : ''} />)}</svg>
+    {view === 'focus' && <svg className="trail-branch-tethers" aria-hidden="true">{branches.map(branch => <path key={branch.id} ref={element => { if (element) branchTethers.current.set(branch.id, element); else branchTethers.current.delete(branch.id); }} className={branch.id === chosenId ? 'is-chosen' : ''} />)}</svg>}
     {view === 'focus' && <div ref={deck} className="branch-deck" aria-label={inspecting ? 'Saved alternative paths' : 'Recommended paths'}>
       <div className="branch-deck__heading"><span><CornerDownRight size={15} />{inspecting ? 'Paths from this moment' : chosenId ? 'Your chosen direction' : 'Where to go next'}</span><small>{branches.length ? `${branches.length} paths` : 'Listening'}</small></div>
       {!branches.length && <div className="branch-deck__empty"><Sparkles size={20} /><p>{session.guidanceStatus === 'analysing' ? 'Finding the next move toward your goal…' : inspecting ? 'No recommendations were saved at this exchange. Choose a saved decision below.' : 'Next moves will appear after a completed exchange.'}</p></div>}
