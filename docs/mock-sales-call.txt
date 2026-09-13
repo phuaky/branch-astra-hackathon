@@ -1,0 +1,50 @@
+# Mock sales call (fictional)
+
+Seller: How do you handle new customer requests today?
+Customer: Email and spreadsheets. We get about twenty requests a day.
+Seller: We could automate that handoff.
+Customer: We tried an automation tool before. It sent requests to the wrong person.
+Seller: What happened when a request went to the wrong person?
+Customer: Nobody noticed until the customer chased us.
+Seller: How much time does the current process take in a typical week?
+Customer: About six hours of copying information and checking where requests went. Roughly two requests need chasing each week.
+Seller: What happens to the customer when a request is missed?
+Customer: They wait two or three days. Our team then stays late to clear the backlog. I do not know the revenue impact.
+Seller: What would make a trial worthwhile for you?
+Customer: Fewer missed requests and less time checking spreadsheets. We would need to measure both.
+Seller: Going back to the unreliable tool, how did your team find routing mistakes?
+Customer: Usually through a complaint. There was no clear owner and no alert when a handoff failed.
+Seller: Would letting someone approve the destination before a request is sent address that concern?
+Customer: Yes. Show the proposed destination, let us reject it, and keep a record of who approved it.
+Seller: What should happen if the routing service stops working?
+Customer: Keep the request in a visible queue and notify the owner. Never silently drop it.
+Seller: Which existing systems would this need to connect to?
+Customer: Our shared email inbox and the spreadsheet tracker. We cannot replace either this quarter.
+Seller: Could a pilot export to the existing spreadsheet instead of introducing a new database?
+Customer: That would be easier. Our accounting process already reads that spreadsheet.
+Seller: Are the requests just email text, or do attachments matter too?
+Customer: Many include PDF forms. The attachment and original message must stay together when the request is handed over.
+Seller: Before we connect anything, what are your requirements for customer data?
+Customer: Names and account numbers must stay in our approved systems. Our security lead will ask where every copy goes.
+Seller: Who needs to review a new processor, and what will they ask for?
+Customer: The security lead needs the hosting location, a list of subprocessors, and a clear explanation of who can access the data.
+Seller: Could we use invented names and account numbers for the first trial?
+Customer: Yes, but we still need a deletion policy. Test copies should be removed after seven days.
+Seller: What budget could you consider for a small pilot?
+Customer: Five hundred dollars is the limit. We already pay for several tools, so another subscription will be a hard sell.
+Seller: What would you compare that cost with?
+Customer: The time we actually save, not a promise about automation. I would want a baseline and the trial results side by side.
+Seller: Can we estimate the current cost, then measure it again during the pilot?
+Customer: Use six hours a week at thirty dollars an hour as a starting estimate. We must check those numbers before claiming any saving.
+Seller: How would the people handling requests feel about changing their routine?
+Customer: They are wary after the last tool. A new dashboard and a long training session would probably kill adoption.
+Seller: Would one volunteer, one request type, and a short walkthrough be a reasonable starting point?
+Customer: Yes. Keep notifications in email and limit the walkthrough to fifteen minutes. Let the team give feedback before expanding it.
+Seller: Let us return to your original reliability concern. What would prove that the handoff is safe enough to trial?
+Customer: Show us a wrong destination being caught before sending. Also show what happens when the connection fails.
+Seller: So the review must demonstrate approval, a visible failure queue, and a named owner. Is that the right acceptance check?
+Customer: Yes. If any request can disappear silently, we should not proceed, even if the price is acceptable.
+Seller: Could we review five anonymized examples with your operations and security leads on Tuesday at two?
+Customer: Tuesday at two works. I will bring the examples and invite both leads.
+Seller: We will check routing, failure handling, data deletion, and the current time baseline. Then we can decide whether a pilot fits.
+Customer: Agreed. That meeting is approval to evaluate the idea, not approval to buy. Send those checks with the invitation.

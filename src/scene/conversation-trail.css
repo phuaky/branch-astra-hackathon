@@ -1,0 +1,65 @@
+.conversation-trail {
+  position: relative; width: 100%; height: 100%; min-height: 520px; overflow: hidden;
+  background: radial-gradient(ellipse at 62% 66%, #234b4020, transparent 60%), #091216;
+}
+.conversation-trail__viewport, .conversation-trail__shade, .trail-labels { position: absolute; inset: 0; }
+.conversation-trail__viewport canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.conversation-trail__viewport canvas:active { cursor: grabbing; }
+.conversation-trail__shade { pointer-events: none; background: linear-gradient(180deg, #091216 0%, #09121600 32%, #09121600 72%, #091216cc 100%); box-shadow: inset 0 0 70px #091216; }
+.trail-heading { position: absolute; top: 88px; left: 36px; pointer-events: none; }
+.trail-eyebrow { font-size: 10px; letter-spacing: 2px; font-weight: 600; color: #80aa9e; }
+.trail-heading h1 { font: 500 27px/1.3 Manrope, sans-serif; color: #e4eee7; margin: 10px 0 7px; letter-spacing: -.9px; }
+.trail-heading p { font-size: 12px; color: #76918a; }
+.trail-labels { pointer-events: none; }
+.trail-tethers { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.trail-card {
+  position: absolute; left: 0; top: 0; display: flex; flex-direction: column; gap: 9px;
+  width: 176px; padding: 15px 16px; border: 1px solid #89bca326; border-radius: 12px;
+  color: #c1d5cb; background: linear-gradient(145deg, #162824f5, #0d1a1bf5); text-align: left;
+  box-shadow: 0 12px 35px #0003; opacity: 0; visibility: hidden; pointer-events: none;
+  transition: border-color .16s, box-shadow .16s; backdrop-filter: blur(14px);
+}
+.trail-card:hover, .trail-card:focus-visible { border-color: #b2e4cc99; box-shadow: 0 10px 40px #0005; outline: none; }
+.trail-card__kicker { display: flex; align-items: center; gap: 7px; font-size: 16px; line-height: 1.3; color: #7ea996; font-weight: 500; }
+.trail-card__dot { display: block; width: 5px; height: 5px; border-radius: 50%; background: #8fb8a5; flex-shrink: 0; }
+.trail-card__title { font-size: 18px; line-height: 1.3; font-weight: 600; color: #e0eae4; letter-spacing: -.4px; overflow-wrap: anywhere; }
+.trail-card__detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 16px; line-height: 1.45; color: #94aaa0; }
+.trail-card__return, .trail-card__speaker { font-size: 16px; line-height: 1.3; color: #93b7a4; }
+.trail-card.is-current { width: 240px; padding: 19px 20px; border-color: #a3ebcb85; background: linear-gradient(145deg, #203a30fa, #142b25fa); box-shadow: 0 0 50px #78ddb90a, 0 18px 50px #0003; }
+.trail-card.is-current .trail-card__title { font-size: 22px; color: #ecfff4; }
+.trail-card.is-current .trail-card__kicker { color: #b6efce; }
+.trail-card.is-current .trail-card__dot { background: #b6efce; box-shadow: 0 0 9px #b6efce99; }
+.trail-card.is-current .trail-card__detail { color: #d2e3d7; -webkit-line-clamp: 3; }
+.trail-card.is-current .trail-card__speaker { border-top: 1px solid #b0d7bc1c; padding-top: 10px; margin-top: 1px; color: #8bb49b; }
+.trail-card--suggestion { width: 237px; border-style: dashed; border-color: #bcaa7045; background: linear-gradient(145deg, #26291bf5, #191e19f5); }
+.trail-card--suggestion .trail-card__kicker { color: #c5af74; }
+.trail-card--suggestion .trail-card__title { font-size: 17px; font-weight: 500; color: #dddcc9; }
+.trail-card--suggestion::after { background: linear-gradient(#d8bd7170, #d8bd7110); }
+.trail-card--suggestion.is-recommended { border-style: solid; border-color: #dab86b9c; background: linear-gradient(145deg, #32311ef5, #24251bf5); }
+.trail-card--suggestion.is-recommended .trail-card__title { color: #fff0c7; }
+.trail-card--suggestion .trail-card__detail { -webkit-line-clamp: 4; color: #b5b5a2; }
+.trail-card.is-practice { border-color: #c8aff67a; }
+.trail-card.is-practice .trail-card__kicker { color: #c8aff6; }
+.conversation-trail[data-view='overview'] .trail-card { width: 180px; padding: 12px 14px; }
+.conversation-trail[data-view='overview'] .trail-card__title { font-size: 16px; }
+.conversation-trail[data-view='overview'] .trail-card__speaker, .conversation-trail[data-view='overview'] .trail-card__return { display: none; }
+.trail-status { position: absolute; bottom: 73px; left: 30px; right: 30px; display: flex; justify-content: center; align-items: center; gap: 14px; font-size: 11px; color: #708d80; pointer-events: none; }
+.trail-status button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; color: #bbd0b5; pointer-events: auto; }
+.trail-status button:hover { background: #b5e5c411; border-radius: 5px; }
+.trail-navigator { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; border: 1px solid #a5d0b221; border-radius: 30px; padding: 6px 8px; background: #101f1cdd; white-space: nowrap; }
+.trail-navigator button { padding: 7px; border-radius: 50%; display: flex; color: #a7cdb4; }
+.trail-navigator button:hover { background: #a5d0b211; }
+.trail-navigator label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8aab96; }
+.trail-navigator select { color: #d4e5d8; background: #142620; border: none; max-width: 190px; font-size: 12px; padding: 5px; border-radius: 4px; }
+.trail-empty { position: absolute; left: 20%; right: 20%; top: 48%; text-align: center; }
+.trail-empty h2 { font-size: 19px; font-weight: 500; margin-bottom: 10px; }
+.trail-empty p { color: #8fa79b; font-size: 14px; }
+.trail-empty__point { display: block; height: 10px; width: 10px; border-radius: 50%; background: #b6efce; margin: 0 auto 28px; box-shadow: 0 0 40px #91f3ce; }
+@media (max-width: 1100px) { .trail-heading h1 { font-size: 23px; } .trail-heading { left: 22px; } .trail-card { width: 155px; } .trail-card.is-current { width: 211px; padding: 16px; } .trail-card--suggestion { width: 207px; } }
+@media (max-height: 820px) {
+  .trail-heading { top: 70px; }
+  .trail-heading h1 { font-size: 22px; margin: 6px 0 0; }
+  .trail-heading p { display: none; }
+  .trail-card--topic .trail-card__detail { -webkit-line-clamp: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .trail-card { transition: none; } }
